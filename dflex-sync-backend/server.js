@@ -70,11 +70,8 @@ if (SUPABASE_DB_URL) {
 }
 
 if (supabasePool) {
-  ensureMeasurementMappingsTable(supabasePool).catch((err) => {
-    console.error('No se pudo inicializar preproduccion_property_mappings:', err?.message || err);
-  });
-
-  // Reintenta la sincronización de estructura de tablas dos veces por día (08:30 y 17:30, hora Argentina).
+  // Sincroniza la estructura de tablas dos veces por día (08:30 y 17:30, hora Argentina).
+  // No corre al arrancar ni al abrir la página: solo en estos horarios.
   cron.schedule('30 8,17 * * *', () => {
     ensureMeasurementMappingsTable(supabasePool).catch((err) => {
       console.error('No se pudo sincronizar preproduccion_property_mappings (cron):', err?.message || err);
