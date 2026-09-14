@@ -92,6 +92,14 @@ if (!supabaseAdmin) {
   console.warn('ATENCIÓN: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY no configurados. Auth/roles no funcionarán.');
 }
 
+// Sistema de Tickets compartido entre apps: todas (planificación,
+// integrador, y las que se sumen después) escriben en las mismas tablas
+// public.tickets / public.ticket_mensajes — no cada app tiene la suya.
+// Esas tablas viven en la MISMA base que ya usa el resto de esta app
+// (SUPABASE_DB_URL), así que no hace falta un pool ni una env var aparte:
+// se reusa `supabasePool`. Ver Backend/server/index.js (MIGRATIONS, tablas
+// 'tickets'/'ticket_mensajes') en el repo de planificación.
+
 // =====================
 // HELPERS
 // =====================
@@ -1160,7 +1168,10 @@ function schedulePreproduccionSyncWorker() {
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// 25mb: deja lugar a los adjuntos de un ticket (hasta 5, ~15MB cada uno en
+// base64) ademas del resto del payload. Ver /api/tickets y
+// src/utils/ticketAttachment.js en el front para el limite del lado cliente.
+app.use(express.json({ limit: '25mb' }));
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
@@ -1174,6 +1185,112 @@ app.get('/api/me', requireAuth, attachRole, (req, res) => {
     user: { id: req.user.id, email: req.user.email },
     role: req.role || 'viewer',
   });
+});
+
+// =====================
+// TICKETS (tablas compartidas con planificación, misma base — ver
+// comentario junto a supabasePool más arriba. Cualquier usuario logueado
+// puede crear un ticket y ver/responder los propios; se gestionan todos
+// desde /admin/tickets en planificación, no hay pantalla de gestión acá.)
+// =====================
+
+const MAX_TICKET_ADJUNTOS = 5;
+function normalizeTicketAdjuntos(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, MAX_TICKET_ADJUNTOS).map((a) => ({
+    name: String(a?.name || 'adjunto').slice(0, 200),
+    type: String(a?.type || 'application/octet-stream').slice(0, 100),
+    size: Number(a?.size || 0) || 0,
+    data_url: String(a?.data_url || ''),
+    uploaded_at: a?.uploaded_at || new Date().toISOString(),
+  })).filter((a) => a.data_url);
+}
+
+app.post('/api/tickets', requireAuth, async (req, res) => {
+  if (!supabasePool) return res.status(500).json({ error: 'SUPABASE_DB_URL no está configurado' });
+  try {
+    const categoria = String(req.body?.categoria || '').trim();
+    const mensaje = String(req.body?.mensaje || '').trim();
+    const rutaOrigen = req.body?.rutaOrigen ? String(req.body.rutaOrigen) : null;
+    const adjuntos = normalizeTicketAdjuntos(req.body?.adjuntos);
+    if (!categoria) return res.status(400).json({ error: 'Falta la categoría' });
+    if (!mensaje) return res.status(400).json({ error: 'Falta el mensaje' });
+
+    const { rows } = await supabasePool.query(
+      `
+      insert into public.tickets (categoria, mensaje, ruta_origen, creado_por_id, creado_por_username, app_origen, adjuntos)
+      values ($1, $2, $3, $4, $5, 'integrador', $6::jsonb)
+      returning *;
+      `,
+      [categoria, mensaje, rutaOrigen, req.user.id, req.user.email, JSON.stringify(adjuntos)]
+    );
+    return res.json({ ok: true, ticket: rows[0] });
+  } catch (err) {
+    console.error('Error en POST /api/tickets:', err);
+    return res.status(500).json({ error: 'Error creando el ticket', details: err.message || String(err) });
+  }
+});
+
+app.get('/api/tickets/mine', requireAuth, async (req, res) => {
+  if (!supabasePool) return res.status(500).json({ error: 'SUPABASE_DB_URL no está configurado' });
+  try {
+    const { rows } = await supabasePool.query(
+      `select * from public.tickets where creado_por_id = $1 order by created_at desc;`,
+      [req.user.id]
+    );
+    return res.json({ ok: true, tickets: rows });
+  } catch (err) {
+    console.error('Error en GET /api/tickets/mine:', err);
+    return res.status(500).json({ error: 'Error listando tus tickets', details: err.message || String(err) });
+  }
+});
+
+app.get('/api/tickets/mine/:id', requireAuth, async (req, res) => {
+  if (!supabasePool) return res.status(500).json({ error: 'SUPABASE_DB_URL no está configurado' });
+  try {
+    const { rows } = await supabasePool.query(
+      `select * from public.tickets where id = $1 and creado_por_id = $2;`,
+      [Number(req.params.id), req.user.id]
+    );
+    const ticket = rows[0];
+    if (!ticket) return res.status(404).json({ error: 'Ticket no encontrado' });
+    const mensajes = await supabasePool.query(
+      `select * from public.ticket_mensajes where ticket_id = $1 order by created_at asc;`,
+      [ticket.id]
+    );
+    return res.json({ ok: true, ticket: { ...ticket, mensajes: mensajes.rows } });
+  } catch (err) {
+    console.error('Error en GET /api/tickets/mine/:id:', err);
+    return res.status(500).json({ error: 'Error obteniendo el ticket', details: err.message || String(err) });
+  }
+});
+
+app.post('/api/tickets/mine/:id/messages', requireAuth, async (req, res) => {
+  if (!supabasePool) return res.status(500).json({ error: 'SUPABASE_DB_URL no está configurado' });
+  try {
+    const mensaje = String(req.body?.mensaje || '').trim();
+    if (!mensaje) return res.status(400).json({ error: 'Falta el mensaje' });
+
+    const own = await supabasePool.query(
+      `select id from public.tickets where id = $1 and creado_por_id = $2;`,
+      [Number(req.params.id), req.user.id]
+    );
+    if (!own.rows[0]) return res.status(404).json({ error: 'Ticket no encontrado' });
+
+    const { rows } = await supabasePool.query(
+      `
+      insert into public.ticket_mensajes (ticket_id, autor_id, autor_username, es_admin, mensaje)
+      values ($1, $2, $3, false, $4)
+      returning *;
+      `,
+      [own.rows[0].id, req.user.id, req.user.email, mensaje]
+    );
+    await supabasePool.query(`update public.tickets set updated_at = now() where id = $1;`, [own.rows[0].id]);
+    return res.json({ ok: true, mensaje: rows[0] });
+  } catch (err) {
+    console.error('Error en POST /api/tickets/mine/:id/messages:', err);
+    return res.status(500).json({ error: 'Error agregando el mensaje', details: err.message || String(err) });
+  }
 });
 
 // =====================
