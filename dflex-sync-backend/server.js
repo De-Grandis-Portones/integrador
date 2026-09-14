@@ -9,8 +9,10 @@ const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
+const cron = require('node-cron');
 const {
   ensureMeasurementMappingsTable,
+  getMeasurementMappingsLastSyncAt,
   listMeasurementSourceCatalog,
   listMeasurementPropertyMappings,
   upsertMeasurementPropertyMapping,
@@ -71,6 +73,13 @@ if (supabasePool) {
   ensureMeasurementMappingsTable(supabasePool).catch((err) => {
     console.error('No se pudo inicializar preproduccion_property_mappings:', err?.message || err);
   });
+
+  // Reintenta la sincronización de estructura de tablas dos veces por día (08:30 y 17:30, hora Argentina).
+  cron.schedule('30 8,17 * * *', () => {
+    ensureMeasurementMappingsTable(supabasePool).catch((err) => {
+      console.error('No se pudo sincronizar preproduccion_property_mappings (cron):', err?.message || err);
+    });
+  }, { timezone: 'America/Argentina/Buenos_Aires' });
 }
 
 if (supabasePool) {
@@ -1756,6 +1765,10 @@ app.get('/api/measurement-source-catalog', requireAuth, attachRole, async (_req,
       details: err.message || String(err),
     });
   }
+});
+
+app.get('/api/property-mappings/last-sync', requireAuth, attachRole, async (_req, res) => {
+  return res.json({ lastSyncAt: getMeasurementMappingsLastSyncAt() });
 });
 
 app.get('/api/property-mappings', requireAuth, attachRole, async (_req, res) => {

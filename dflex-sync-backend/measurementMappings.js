@@ -249,6 +249,12 @@ function mapProductionAssignmentRow(row, meta = {}) {
   };
 }
 
+let measurementMappingsLastSyncAt = null;
+
+function getMeasurementMappingsLastSyncAt() {
+  return measurementMappingsLastSyncAt;
+}
+
 async function ensureMeasurementMappingsTable(pool) {
   if (!pool) throw new Error('SUPABASE_DB_URL no está configurado');
 
@@ -285,6 +291,8 @@ async function ensureMeasurementMappingsTable(pool) {
       updated_at timestamptz NOT NULL DEFAULT now()
     )
   `);
+
+  measurementMappingsLastSyncAt = new Date().toISOString();
 }
 
 async function listLegacyMeasurementPropertyMappings(pool) {
@@ -637,6 +645,7 @@ module.exports = {
   IPANEL_SOURCE_SECTION,
   IPANEL_ASSIGNMENTS_TABLE,
   ensureMeasurementMappingsTable,
+  getMeasurementMappingsLastSyncAt,
   listMeasurementSourceCatalog,
   listMeasurementPropertyMappings,
   upsertMeasurementPropertyMapping,

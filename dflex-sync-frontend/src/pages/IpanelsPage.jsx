@@ -104,6 +104,7 @@ export default function IpanelsPage({ authHeader, canSyncIpanel }) {
   const [error, setError] = useState('');
   const [syncResult, setSyncResult] = useState(null);
   const [lastSyncAt, setLastSyncAt] = useState(null);
+  const [schemaSyncAt, setSchemaSyncAt] = useState(null);
   const [filter, setFilter] = useState('');
   const [showSimplePanel, setShowSimplePanel] = useState(false);
   const [catalogRows, setCatalogRows] = useState([]);
@@ -133,6 +134,16 @@ export default function IpanelsPage({ authHeader, canSyncIpanel }) {
     const f = toStr(extra.filter ?? filter);
     if (f) { params.set('partida', f); params.set('nv', f); }
     return params;
+  }
+
+  // Última corrida del cron de estructura de tablas (08:30 / 17:30)
+  async function loadSchemaLastSync() {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/property-mappings/last-sync`, { headers });
+      if (!res.ok) return;
+      const data = await res.json();
+      setSchemaSyncAt(data?.lastSyncAt || null);
+    } catch (e) { console.warn('No se pudo leer ultima sync de estructura:', e?.message); }
   }
 
   // SQL tab loaders
@@ -334,6 +345,7 @@ export default function IpanelsPage({ authHeader, canSyncIpanel }) {
 
   // Effects
   useEffect(() => { loadIpanelsFromSql(''); }, []);
+  useEffect(() => { loadSchemaLastSync(); }, []);
   useEffect(() => { if (showSimplePanel) loadDescripcionCatalog(); }, [showSimplePanel]);
   useEffect(() => {
     if (activeTab === 'presupuestador') { loadPresupuestadorRows(); loadAssignments(); }
@@ -356,6 +368,9 @@ export default function IpanelsPage({ authHeader, canSyncIpanel }) {
         <button className={`nav-btn${activeTab === 'presupuestador' ? ' active' : ''}`} onClick={() => setActiveTab('presupuestador')}>
           Presupuestador (INV)
         </button>
+        {schemaSyncAt
+          ? <span className="info" style={{ marginLeft: 'auto' }}>Última sincronización de estructura: {formatDateTime(schemaSyncAt)}</span>
+          : <span className="info" style={{ marginLeft: 'auto' }}>Sin sincronización de estructura registrada</span>}
       </div>
 
       {/* ───────────── TAB SQL SERVER ───────────── */}
