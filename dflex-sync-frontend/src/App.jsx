@@ -5,7 +5,7 @@ import FormulasPage from './pages/FormulasPage';
 import ImportPage from './pages/ImportPage';
 import PortonesPage from './pages/PortonesPage';
 import IpanelsPage from './pages/IpanelsPage';
-import TicketsPage from './pages/TicketsPage';
+import TicketWidget from './components/TicketWidget';
 import ViewPdf from './pages/ViewPdf';
 import PdfLinkView from './pages/PdfLinkView';
 import LoginPage from './pages/LoginPage.jsx';
@@ -542,23 +542,14 @@ function MainApp({ session, signOut, role }) {
               Ipanels
             </button>
 
-            <button
-              type="button"
-              className={currentPage === 'tickets' ? 'nav-btn active' : 'nav-btn'}
-              onClick={() => setCurrentPage('tickets')}
-            >
-              <img
-                src="/ticket-logo.png"
-                alt=""
-                style={{ width: 14, height: 14, objectFit: 'contain', verticalAlign: 'middle', marginRight: 6 }}
-              />
-              Tickets
-            </button>
           </nav>
 
-          <button type="button" className="btn-secondary" onClick={() => signOut()}>
-            Cerrar sesión
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <TicketWidget authHeader={authHeader} />
+            <button type="button" className="btn-secondary" onClick={() => signOut()}>
+              Cerrar sesión
+            </button>
+          </div>
         </div>
 
         {currentPage === 'tabla' && (
@@ -636,7 +627,6 @@ function MainApp({ session, signOut, role }) {
         <IpanelsPage authHeader={authHeader} canSyncIpanel={canSyncIpanel} />
       )}
 
-      {currentPage === 'tickets' && <TicketsPage authHeader={authHeader} />}
     </div>
   );
 }
