@@ -1201,6 +1201,22 @@ app.get('/api/me', requireAuth, attachRole, (req, res) => {
 // =====================
 
 const MAX_TICKET_ADJUNTOS = 5;
+// ~15MB de bytes crudos de adjuntos (igual al límite combinado del cliente,
+// ver ticketAttachment.js) codificado en base64 (~x1.34). El cliente ya
+// valida esto antes de enviar, pero acá no hay que confiar ciegamente en
+// eso: es la segunda línea de defensa server-side.
+const MAX_TICKET_ADJUNTOS_DATA_URL_CHARS = 21 * 1024 * 1024;
+// El cliente SIEMPRE genera data_url con FileReader.readAsDataURL(), así que
+// nunca debería ser otra cosa. Sin este chequeo, alguien podía mandar
+// data_url = "https://atacante.com/pixel.gif" (o un data: URI con un mime no
+// permitido, ej. text/html) y que se renderizara solo (<img src>) o se
+// abriera (openTicketAttachment) al primer admin que mirara el ticket —
+// tracking pixel o, peor, un blob text/html ejecutando JS en el origen del
+// panel admin (robo de token vía localStorage). Se valida el mime REAL
+// embebido en el data: URI, no el campo `type` (que también lo controla
+// quien manda el ticket y no tiene por qué coincidir).
+const ALLOWED_ADJUNTO_DATA_URL_RE = /^data:(image\/(?:jpeg|png|webp|gif)|application\/pdf|video\/(?:mp4|quicktime|webm));base64,/i;
+
 function normalizeTicketAdjuntos(raw) {
   if (!Array.isArray(raw)) return [];
   return raw.slice(0, MAX_TICKET_ADJUNTOS).map((a) => ({
@@ -1209,7 +1225,11 @@ function normalizeTicketAdjuntos(raw) {
     size: Number(a?.size || 0) || 0,
     data_url: String(a?.data_url || ''),
     uploaded_at: a?.uploaded_at || new Date().toISOString(),
-  })).filter((a) => a.data_url);
+  })).filter((a) => ALLOWED_ADJUNTO_DATA_URL_RE.test(a.data_url));
+}
+
+function ticketAdjuntosExceedTotal(adjuntos) {
+  return adjuntos.reduce((sum, a) => sum + a.data_url.length, 0) > MAX_TICKET_ADJUNTOS_DATA_URL_CHARS;
 }
 
 app.post('/api/tickets', requireAuth, async (req, res) => {
@@ -1221,6 +1241,9 @@ app.post('/api/tickets', requireAuth, async (req, res) => {
     const adjuntos = normalizeTicketAdjuntos(req.body?.adjuntos);
     if (!categoria) return res.status(400).json({ error: 'Falta la categoría' });
     if (!mensaje) return res.status(400).json({ error: 'Falta el mensaje' });
+    if (ticketAdjuntosExceedTotal(adjuntos)) {
+      return res.status(400).json({ error: 'Los adjuntos superan el tamaño total permitido.' });
+    }
 
     const { rows } = await supabasePool.query(
       `
@@ -1240,8 +1263,14 @@ app.post('/api/tickets', requireAuth, async (req, res) => {
 app.get('/api/tickets/mine', requireAuth, async (req, res) => {
   if (!supabasePool) return res.status(500).json({ error: 'SUPABASE_DB_URL no está configurado' });
   try {
+    // Sin `adjuntos`: esa columna puede pesar varios MB por fila (adjuntos en
+    // base64) y esta lista es solo para pintar categoría/estado/fecha - se
+    // recorta a propósito. El detalle (GET /api/tickets/mine/:id) sí trae
+    // todo con `select *`.
     const { rows } = await supabasePool.query(
-      `select * from public.tickets where creado_por_id = $1 order by created_at desc;`,
+      `select id, categoria, mensaje, estado, creado_por_id, creado_por_username,
+              ruta_origen, app_origen, created_at, updated_at
+       from public.tickets where creado_por_id = $1 order by created_at desc;`,
       [req.user.id]
     );
     return res.json({ ok: true, tickets: rows });
@@ -1296,6 +1325,26 @@ app.post('/api/tickets/mine/:id/messages', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('Error en POST /api/tickets/mine/:id/messages:', err);
     return res.status(500).json({ error: 'Error agregando el mensaje', details: err.message || String(err) });
+  }
+});
+
+// DELETE /api/tickets/mine/:id — anular (= borrar) un ticket propio,
+// autoservicio, no hace falta que intervenga soporte. Solo si todavía no
+// está "closed" (ya resuelto por soporte, eso queda como historial).
+// `ticket_mensajes` tiene ON DELETE CASCADE, así que las respuestas del
+// ticket se borran solas con esto.
+app.delete('/api/tickets/mine/:id', requireAuth, async (req, res) => {
+  if (!supabasePool) return res.status(500).json({ error: 'SUPABASE_DB_URL no está configurado' });
+  try {
+    const { rows } = await supabasePool.query(
+      `delete from public.tickets where id = $1 and creado_por_id = $2 and estado != 'closed' returning id;`,
+      [Number(req.params.id), req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Ticket no encontrado o ya no se puede anular' });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Error en DELETE /api/tickets/mine/:id:', err);
+    return res.status(500).json({ error: 'Error anulando el ticket', details: err.message || String(err) });
   }
 });
 
