@@ -5,10 +5,9 @@ import PdfLinkView from './pages/PdfLinkView';
 import { isPdfLinkMode } from './utils/pdfLinkMode';
 
 function Gate() {
+  const { session, loading } = useAuth();
   const linkMode = isPdfLinkMode();
   if (linkMode) return <PdfLinkView />;
-
-  const { session, loading } = useAuth();
 
   if (loading) {
     return (
