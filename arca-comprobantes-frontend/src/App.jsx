@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import AccountPicker from './components/AccountPicker.jsx';
 import Login from './Login.jsx';
+import RendicionesView from './RendicionesView.jsx';
 import { getStoredAuth, clearStoredAuth } from './auth.js';
 import { getStoredTheme, applyTheme } from './theme.js';
 import { getJournals, uploadCsv, cargarComprobantes } from './api.js';
@@ -35,6 +36,7 @@ function matcheaBusqueda(fila, textoBusqueda) {
 }
 
 function ComprobantesApp({ onLogout, theme, onToggleTheme }) {
+  const [vista, setVista] = useState('comprobantes'); // 'comprobantes' | 'rendiciones'
   const [journals, setJournals] = useState([]);
   const [filas, setFilas] = useState([]);
   const [aviso, setAviso] = useState(null);
@@ -135,6 +137,27 @@ function ComprobantesApp({ onLogout, theme, onToggleTheme }) {
         </div>
       </div>
 
+      <div className="tabs">
+        <button
+          type="button"
+          className={`tab-btn ${vista === 'comprobantes' ? 'tab-btn-activo' : ''}`}
+          onClick={() => setVista('comprobantes')}
+        >
+          Comprobantes ARCA
+        </button>
+        <button
+          type="button"
+          className={`tab-btn ${vista === 'rendiciones' ? 'tab-btn-activo' : ''}`}
+          onClick={() => setVista('rendiciones')}
+        >
+          Rendiciones Logística
+        </button>
+      </div>
+
+      {vista === 'rendiciones' ? (
+        <RendicionesView />
+      ) : (
+        <>
       <div className="upload-box">
         <input type="file" accept=".csv" onChange={handleFile} disabled={subiendo} />
         {subiendo && <span>Procesando…</span>}
@@ -310,6 +333,8 @@ function ComprobantesApp({ onLogout, theme, onToggleTheme }) {
             ))}
           </ul>
         </div>
+      )}
+        </>
       )}
     </div>
   );

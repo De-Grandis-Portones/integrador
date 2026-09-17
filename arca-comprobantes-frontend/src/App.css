@@ -222,3 +222,24 @@ select, .account-picker input {
 
 .lista-proveedores-faltantes { margin: 8px 0 0; padding-left: 20px; }
 .lista-proveedores-faltantes li { padding: 2px 0; font-size: 13px; }
+
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+.tab-btn {
+  padding: 8px 16px; border: none; background: none; color: var(--text-muted);
+  font-size: 14px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.tab-btn-activo { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+.rendiciones-layout { display: flex; gap: 20px; align-items: flex-start; }
+.rendiciones-lista { flex: 0 0 300px; }
+.rendiciones-detalle { flex: 1 1 auto; min-width: 0; }
+.rendiciones-titulo { font-size: 15px; margin: 0 0 8px; }
+.rendiciones-ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.rendiciones-item {
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: pointer;
+  background: var(--bg-panel); display: flex; flex-direction: column; gap: 2px;
+}
+.rendiciones-item:hover { background: var(--bg-panel-hover); }
+.rendiciones-item-activo { border-color: var(--accent); background: var(--bg-panel-hover); }
+.rendiciones-item-top { display: flex; justify-content: space-between; gap: 8px; }
