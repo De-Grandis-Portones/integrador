@@ -193,21 +193,11 @@ async function fetchValoresByPartida(partida, accessToken) {
 
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
-    throw new Error(`HTTP ${res.status} en ${base}${txt ? `: ${txt}` : ''}`);
+    throw new Error(`HTTP ${res.status} en ${url}${txt ? `: ${txt}` : ''}`);
   }
 
   const data = await res.json();
-  const rows = Array.isArray(data?.rows) ? data.rows : [];
-
-  // Aseguramos el agrupamiento por inicio_prod_imput del lado del front,
-  // por si el backend no está filtrando correctamente.
-  const filtered = rows.filter((r) => getInicioProdImput(r) === f);
-
-  // Si el backend devuelve filas pero no trae el campo inicio_prod_imput, no podemos filtrar acá.
-  const anyHasInicio = rows.some((r) => !!getInicioProdImput(r));
-  if (!anyHasInicio) return rows;
-
-  return filtered;
+  return Array.isArray(data?.rows) ? data.rows : [];
 }
 
 async function fetchValoresByFechaProduccion(fechaProduccion, accessToken) {
