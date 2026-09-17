@@ -49,6 +49,14 @@ export async function cargarComprobantes(comprobantes) {
   );
 }
 
+export async function fetchRendiciones() {
+  return handle(await fetch(`${API_URL}/api/rendiciones`, { headers: getAuthHeader() }));
+}
+
+export async function fetchRendicionDetalle(viajeId) {
+  return handle(await fetch(`${API_URL}/api/rendiciones/${viajeId}`, { headers: getAuthHeader() }));
+}
+
 // Usado solo desde el formulario de login: prueba credenciales puntuales antes de
 // guardarlas, sin depender de lo que ya esté (o no) en sessionStorage.
 export async function verificarCredenciales(user, password) {
