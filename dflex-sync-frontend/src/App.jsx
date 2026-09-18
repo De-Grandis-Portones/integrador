@@ -5,6 +5,7 @@ import FormulasPage from './pages/FormulasPage';
 import ImportPage from './pages/ImportPage';
 import PortonesPage from './pages/PortonesPage';
 import IpanelsPage from './pages/IpanelsPage';
+import TicketWidget from './components/TicketWidget';
 import ViewPdf from './pages/ViewPdf';
 import PdfLinkView from './pages/PdfLinkView';
 import LoginPage from './pages/LoginPage.jsx';
@@ -540,11 +541,15 @@ function MainApp({ session, signOut, role }) {
             >
               Ipanels
             </button>
+
           </nav>
 
-          <button type="button" className="btn-secondary" onClick={() => signOut()}>
-            Cerrar sesión
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <TicketWidget authHeader={authHeader} />
+            <button type="button" className="btn-secondary" onClick={() => signOut()}>
+              Cerrar sesión
+            </button>
+          </div>
         </div>
 
         {currentPage === 'tabla' && (
@@ -621,6 +626,7 @@ function MainApp({ session, signOut, role }) {
       {currentPage === 'ipanels' && (
         <IpanelsPage authHeader={authHeader} canSyncIpanel={canSyncIpanel} />
       )}
+
     </div>
   );
 }

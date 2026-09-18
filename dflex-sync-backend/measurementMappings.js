@@ -249,6 +249,12 @@ function mapProductionAssignmentRow(row, meta = {}) {
   };
 }
 
+let measurementMappingsLastSyncAt = null;
+
+function getMeasurementMappingsLastSyncAt() {
+  return measurementMappingsLastSyncAt;
+}
+
 async function ensureMeasurementMappingsTable(pool) {
   if (!pool) throw new Error('SUPABASE_DB_URL no está configurado');
 
@@ -285,6 +291,8 @@ async function ensureMeasurementMappingsTable(pool) {
       updated_at timestamptz NOT NULL DEFAULT now()
     )
   `);
+
+  measurementMappingsLastSyncAt = new Date().toISOString();
 }
 
 async function listLegacyMeasurementPropertyMappings(pool) {
@@ -404,8 +412,6 @@ async function listProductionPropertyAssignments(pool) {
 }
 
 async function listMeasurementPropertyMappings(pool) {
-  await ensureMeasurementMappingsTable(pool);
-
   const [legacyRows, productionRowsRaw, productionCatalog, ipanelRowsRaw] = await Promise.all([
     listLegacyMeasurementPropertyMappings(pool),
     listProductionPropertyAssignmentsRaw(pool),
@@ -442,8 +448,6 @@ async function listMeasurementPropertyMappings(pool) {
 }
 
 async function upsertProductionPropertyAssignment(pool, payload) {
-  await ensureMeasurementMappingsTable(pool);
-
   const sourceKey = normalizeText(payload?.source_key || payload?.source_path);
   if (!sourceKey) throw new Error('Falta source_key/source_path para asignación desde Nota de venta');
 
@@ -472,8 +476,6 @@ async function upsertProductionPropertyAssignment(pool, payload) {
 }
 
 async function upsertIpanelPropertyAssignment(pool, payload) {
-  await ensureMeasurementMappingsTable(pool);
-
   const sourceKey = normalizeText(payload?.source_key || payload?.source_path);
   if (!sourceKey) throw new Error('Falta source_key/source_path para asignación INV');
 
@@ -493,8 +495,6 @@ async function upsertIpanelPropertyAssignment(pool, payload) {
 }
 
 async function upsertMeasurementPropertyMapping(pool, payload) {
-  await ensureMeasurementMappingsTable(pool);
-
   if (isIpanelAssignmentPayload(payload)) {
     return upsertIpanelPropertyAssignment(pool, payload);
   }
@@ -549,8 +549,6 @@ async function upsertMeasurementPropertyMapping(pool, payload) {
 }
 
 async function reapplyProductionPropertyAssignments(pool, { nv } = {}) {
-  await ensureMeasurementMappingsTable(pool);
-
   const assignmentRows = await listProductionPropertyAssignmentsRaw(pool);
   const assignments = (assignmentRows || [])
     .filter((row) => row?.is_active !== false)
@@ -637,6 +635,7 @@ module.exports = {
   IPANEL_SOURCE_SECTION,
   IPANEL_ASSIGNMENTS_TABLE,
   ensureMeasurementMappingsTable,
+  getMeasurementMappingsLastSyncAt,
   listMeasurementSourceCatalog,
   listMeasurementPropertyMappings,
   upsertMeasurementPropertyMapping,
