@@ -1195,6 +1195,22 @@ function ticketAdjuntosExceedTotal(adjuntos) {
   return adjuntos.reduce((sum, a) => sum + a.data_url.length, 0) > MAX_TICKET_ADJUNTOS_DATA_URL_CHARS;
 }
 
+// admin_users es la tabla de admins de planificación: en producción vive en
+// la misma base que tickets, pero no necesariamente en una base local de prueba.
+let adminUsersPromise = null;
+function hayAdminUsers() {
+  if (!adminUsersPromise) {
+    adminUsersPromise = supabasePool
+      .query(`select to_regclass('public.admin_users') is not null as ok;`)
+      .then(({ rows }) => !!rows[0]?.ok)
+      .catch((err) => {
+        adminUsersPromise = null;
+        throw err;
+      });
+  }
+  return adminUsersPromise;
+}
+
 app.post('/api/tickets', requireAuth, async (req, res) => {
   if (!supabasePool) return res.status(500).json({ error: 'SUPABASE_DB_URL no está configurado' });
   try {
@@ -1252,8 +1268,16 @@ app.get('/api/tickets/mine/:id', requireAuth, async (req, res) => {
     );
     const ticket = rows[0];
     if (!ticket) return res.status(404).json({ error: 'Ticket no encontrado' });
+    // Las respuestas de soporte las escribe un admin de planificación
+    // (autor_id = admin_users.id): se muestra su nombre real en vez del
+    // usuario de login, y si no tiene nombre cargado queda el usuario.
+    const autorNombre = (await hayAdminUsers())
+      ? `coalesce(case when m.es_admin then
+           (select nullif(trim(au.name), '') from public.admin_users au where au.id::text = m.autor_id::text)
+         end, m.autor_username) as autor_nombre`
+      : 'm.autor_username as autor_nombre';
     const mensajes = await supabasePool.query(
-      `select * from public.ticket_mensajes where ticket_id = $1 order by created_at asc;`,
+      `select m.*, ${autorNombre} from public.ticket_mensajes m where m.ticket_id = $1 order by m.created_at asc;`,
       [ticket.id]
     );
     return res.json({ ok: true, ticket: { ...ticket, mensajes: mensajes.rows } });
