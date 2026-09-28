@@ -141,55 +141,18 @@ function dayRangeUtc(yyyy_mm_dd) {
 // =====================
 // AUTH / ROLES
 // =====================
-
-async function requireAuth(req, res, next) {
-  try {
-    if (!supabaseAdmin) {
-      return res.status(500).json({ error: 'Supabase admin no configurado' });
-    }
-
-    const hdr = req.headers.authorization || '';
-    const m = hdr.match(/^Bearer\s+(.+)$/i);
-    if (!m) return res.status(401).json({ error: 'Falta token Bearer' });
-
-    const token = m[1];
-    const { data, error } = await supabaseAdmin.auth.getUser(token);
-
-    if (error || !data?.user) {
-      return res.status(401).json({ error: 'Token inválido' });
-    }
-
-    req.user = data.user;
-    next();
-  } catch (e) {
-    return res.status(401).json({ error: 'No autorizado', details: e.message || String(e) });
-  }
-}
-
-async function attachRole(req, _res, next) {
-  try {
-    req.role = 'viewer';
-    if (!supabasePool || !req.user?.id) return next();
-
-    const r = await supabasePool.query('SELECT role FROM app_users WHERE user_id = $1 LIMIT 1', [req.user.id]);
-    req.role = r?.rows?.[0]?.role || 'viewer';
-    next();
-  } catch {
-    req.role = 'viewer';
-    next();
-  }
-}
-
-function requireRole(allowedRoles) {
-  const allowed = new Set(allowedRoles || []);
-  return (req, res, next) => {
-    const role = req.role || 'viewer';
-    if (!allowed.has(role)) {
-      return res.status(403).json({ error: 'No tenés permisos', role });
-    }
-    next();
-  };
-}
+// Movido a authMiddleware.js (mismo comportamiento, ninguna llamada acá abajo
+// cambia) para que registerIpanelRoutes.js pueda usar los mismos
+// requireAuth/attachRole/requireRole en vez de quedar sin auth - ver el
+// comentario en ese archivo.
+const { requireAuth, attachRole, requireRole, configureRolePool } = require('./authMiddleware');
+// attachRole reusa este pool en vez de abrir uno propio - ver el comentario
+// en authMiddleware.js sobre por qué (esta Supabase ya la comparten las 6
+// apps del ecosistema, sumar pools de a poco pega contra su límite de
+// conexiones). Esto corre bien antes de que cualquier request real llegue,
+// las rutas de ipanel recién se registran dentro del app.listen() de más
+// abajo.
+configureRolePool(supabasePool);
 
 // =====================
 // NV TERMINADOS (texto)

@@ -7,6 +7,7 @@ require('dotenv').config();
 const Module = require('module');
 const sql = require('mssql');
 const { Pool } = require('pg');
+const { requireAuth, attachRole, requireRole } = require('./authMiddleware');
 
 function toStr(value) {
   if (value === null || value === undefined) return '';
@@ -645,7 +646,7 @@ function registerIpanelRoutes(app) {
   if (!app || app.__ipanelRoutesRegistered) return;
   app.__ipanelRoutesRegistered = true;
 
-  app.get('/api/ipanel', async (req, res) => {
+  app.get('/api/ipanel', requireAuth, attachRole, async (req, res) => {
     try {
       const pgPool = getIpanelPgPool();
       const mappingMap = await getDescripcionSimpleMappingMap(pgPool);
@@ -669,7 +670,7 @@ function registerIpanelRoutes(app) {
     }
   });
 
-  app.get('/api/ipanel/sql', async (req, res) => {
+  app.get('/api/ipanel/sql', requireAuth, attachRole, async (req, res) => {
     try {
       const pgPool = getIpanelPgPool();
       const mappingMap = await getDescripcionSimpleMappingMap(pgPool);
@@ -693,7 +694,7 @@ function registerIpanelRoutes(app) {
     }
   });
 
-  app.get('/api/ipanel/descripcion-simple/catalog', async (req, res) => {
+  app.get('/api/ipanel/descripcion-simple/catalog', requireAuth, attachRole, async (req, res) => {
     try {
       const rows = await getDescripcionSimpleCatalog({ limit: req.query.limit });
       return res.json({ rows });
@@ -703,7 +704,7 @@ function registerIpanelRoutes(app) {
     }
   });
 
-  app.get('/api/ipanel/descripcion-simple/mappings', async (_req, res) => {
+  app.get('/api/ipanel/descripcion-simple/mappings', requireAuth, attachRole, async (_req, res) => {
     try {
       const pgPool = getIpanelPgPool();
       await ensureDescripcionSimpleSchema(pgPool);
@@ -719,7 +720,7 @@ function registerIpanelRoutes(app) {
     }
   });
 
-  app.put('/api/ipanel/descripcion-simple/mapping', async (req, res) => {
+  app.put('/api/ipanel/descripcion-simple/mapping', requireAuth, attachRole, requireRole(['admin']), async (req, res) => {
     try {
       const result = await upsertDescripcionSimpleMapping(req.body || {});
       return res.json({ ok: true, ...result });
@@ -729,7 +730,7 @@ function registerIpanelRoutes(app) {
     }
   });
 
-  app.post('/api/ipanel/descripcion-simple/mapping', async (req, res) => {
+  app.post('/api/ipanel/descripcion-simple/mapping', requireAuth, attachRole, requireRole(['admin']), async (req, res) => {
     try {
       const result = await upsertDescripcionSimpleMapping(req.body || {});
       return res.json({ ok: true, ...result });
@@ -739,7 +740,7 @@ function registerIpanelRoutes(app) {
     }
   });
 
-  app.get('/api/ipanel/blocklist', async (_req, res) => {
+  app.get('/api/ipanel/blocklist', requireAuth, attachRole, async (_req, res) => {
     try {
       const pgPool = getIpanelPgPool();
       const blockedSet = await getBlockedIpanelPartidas(pgPool);
@@ -750,7 +751,7 @@ function registerIpanelRoutes(app) {
     }
   });
 
-  app.post('/api/ipanel/blocklist/cleanup', async (_req, res) => {
+  app.post('/api/ipanel/blocklist/cleanup', requireAuth, attachRole, requireRole(['admin']), async (_req, res) => {
     try {
       const pgPool = getIpanelPgPool();
       const blockedSet = await getBlockedIpanelPartidas(pgPool);
@@ -762,7 +763,7 @@ function registerIpanelRoutes(app) {
     }
   });
 
-  app.get('/api/ipanel/last-sync', async (_req, res) => {
+  app.get('/api/ipanel/last-sync', requireAuth, attachRole, async (_req, res) => {
     try {
       const lastSyncAt = await getLastIpanelSync();
       return res.json({ lastSyncAt });
@@ -772,7 +773,7 @@ function registerIpanelRoutes(app) {
     }
   });
 
-  app.post('/api/sync/ipanel', async (req, res) => {
+  app.post('/api/sync/ipanel', requireAuth, attachRole, requireRole(['admin']), async (req, res) => {
     try {
       const body = req.body || {};
       const result = await syncIpanels({
@@ -787,7 +788,7 @@ function registerIpanelRoutes(app) {
     }
   });
 
-  app.get('/api/ipanel/presupuestador', async (req, res) => {
+  app.get('/api/ipanel/presupuestador', requireAuth, attachRole, async (req, res) => {
     try {
       const pgPool = getIpanelPgPool();
       const { rows } = await pgPool.query(`
