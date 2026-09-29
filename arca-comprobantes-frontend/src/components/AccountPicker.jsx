@@ -50,6 +50,8 @@ export default function AccountPicker({ value, onChange, search = searchAccounts
 
   function handleInput(text) {
     setQuery(text);
+    // Borrar el texto deja el campo sin valor (ej. proveedor vacío = asiento manual en Rendiciones).
+    if (!text.trim() && value) onChange(null);
     setOpen(true);
     posicionar();
     if (debounceRef.current) clearTimeout(debounceRef.current);

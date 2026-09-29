@@ -91,8 +91,11 @@ export default function RendicionesView() {
     seleccionados.length > 0 &&
     seleccionados.every((g) => {
       const st = rowState[g.id];
-      return st?.partner?.id && st?.account?.id && st?.journalKey;
+      // Proveedor opcional: sin proveedor el gasto va como asiento manual (viático).
+      return st?.account?.id && st?.journalKey;
     });
+  const cantAsientos = seleccionados.filter((g) => !rowState[g.id]?.partner?.id).length;
+  const cantFacturas = seleccionados.length - cantAsientos;
 
   async function handleArchivar() {
     const sinEnviar = detalle.gastos.filter((g) => !g.odoo).length;
@@ -121,9 +124,11 @@ export default function RendicionesView() {
   }
 
   async function handleEnviar() {
+    const partes = [];
+    if (cantFacturas) partes.push(`${cantFacturas} con proveedor: factura de compra en BORRADOR (total sin IVA, a revisar) + pago en BORRADOR`);
+    if (cantAsientos) partes.push(`${cantAsientos} sin proveedor (viáticos): asiento manual en BORRADOR en Operaciones varias, cuenta elegida contra la del modo de pago`);
     const mensaje =
-      `Vas a enviar ${seleccionados.length} gasto(s) a Odoo: se crea cada factura de compra en BORRADOR ` +
-      `(total sin IVA, a revisar) con el comprobante adjunto, y su pago en BORRADOR.\n\n¿Confirmás?`;
+      `Vas a enviar ${seleccionados.length} gasto(s) a Odoo, con el comprobante adjunto:\n\n- ${partes.join('\n- ')}\n\n¿Confirmás?`;
     if (!window.confirm(mensaje)) return;
 
     setEnviando(true);
@@ -131,7 +136,7 @@ export default function RendicionesView() {
     try {
       const payload = seleccionados.map((g) => ({
         gastoId: g.id,
-        partnerId: rowState[g.id].partner.id,
+        partnerId: rowState[g.id].partner?.id || null,
         accountId: rowState[g.id].account.id,
         journalKey: rowState[g.id].journalKey,
       }));
@@ -268,7 +273,8 @@ export default function RendicionesView() {
                       <td>
                         {enOdoo ? (
                           <span className="badge badge-ok" title={`account.move #${g.odoo.moveId}`}>
-                            {g.odoo.state === 'draft' ? 'En Odoo (borrador)' : 'En Odoo'}
+                            {g.odoo.tipo === 'asiento' ? 'En Odoo (asiento' : 'En Odoo (factura'}
+                            {g.odoo.state === 'draft' ? ', borrador)' : ')'}
                           </span>
                         ) : (
                           <span className="badge badge-pending">Pendiente</span>
@@ -276,13 +282,16 @@ export default function RendicionesView() {
                       </td>
                       <td>
                         {!enOdoo && (
-                          <AccountPicker
-                            value={st.partner}
-                            onChange={(p) => updateRow(g.id, { partner: p })}
-                            search={searchPartners}
-                            format={formatProveedor}
-                            placeholder="Buscar proveedor..."
-                          />
+                          <>
+                            <AccountPicker
+                              value={st.partner}
+                              onChange={(p) => updateRow(g.id, { partner: p })}
+                              search={searchPartners}
+                              format={formatProveedor}
+                              placeholder="Vacío = viático (asiento)"
+                            />
+                            {!st.partner?.id && <div className="hint">Sin proveedor: va como asiento manual</div>}
+                          </>
                         )}
                       </td>
                       <td>
@@ -335,7 +344,7 @@ export default function RendicionesView() {
                 {enviando ? 'Enviando…' : `Enviar ${seleccionados.length || ''} a Odoo`}
               </button>
               {seleccionados.length > 0 && !listoParaEnviar && puedeEnviar && (
-                <span className="hint">Falta elegir proveedor, modo de pago y/o cuenta en algún gasto seleccionado.</span>
+                <span className="hint">Falta elegir modo de pago y/o cuenta en algún gasto seleccionado.</span>
               )}
               <button type="button" className="btn-secondary" onClick={handleArchivar} disabled={enviando}>
                 Pasar al historial
@@ -343,9 +352,10 @@ export default function RendicionesView() {
             </div>
             )}
             <p className="hint">
-              Cada gasto se crea en Odoo como factura en borrador (una línea por el total, sin IVA, a revisar) con el
-              comprobante adjunto, y un pago en borrador con el modo de pago elegido. En Odoo hay que completar número de
-              comprobante e IVA, confirmar la factura y después el pago.
+              Con proveedor, cada gasto se crea en Odoo como factura en borrador (una línea por el total, sin IVA, a revisar)
+              y un pago en borrador con el modo de pago elegido; en Odoo hay que completar número de comprobante e IVA,
+              confirmar la factura y después el pago. Sin proveedor (viáticos), se prepara un asiento manual en borrador en
+              Operaciones varias: debe la cuenta elegida, haber la cuenta del modo de pago. Siempre con el comprobante adjunto.
             </p>
             {resultados && (
               <div className="resultados">
@@ -354,7 +364,9 @@ export default function RendicionesView() {
                   {resultados.map((r, i) => (
                     <li key={i} className={r.ok ? (r.avisos?.length ? 'res-warning' : 'res-ok') : 'res-error'}>
                       {r.ok
-                        ? `Gasto #${r.gastoId}: factura en borrador (move #${r.moveId})` +
+                        ? (r.status === 'asiento_borrador'
+                          ? `Gasto #${r.gastoId}: asiento manual en borrador (move #${r.moveId})`
+                          : `Gasto #${r.gastoId}: factura en borrador (move #${r.moveId})`) +
                           (r.paymentId ? ` + pago en borrador (#${r.paymentId})` : '') +
                           (r.avisos?.length ? ` — ${r.avisos.join(' ')}` : '')
                         : `Gasto #${r.gastoId}: ${r.error}`}
