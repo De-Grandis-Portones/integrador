@@ -75,6 +75,18 @@ export async function cargarRendicion(viajeId, gastos) {
   );
 }
 
+export async function archivarRendicion(viajeId) {
+  return handle(
+    await fetch(`${API_URL}/api/rendiciones/${viajeId}/archivar`, { method: 'POST', headers: getAuthHeader() })
+  );
+}
+
+export async function desarchivarRendicion(viajeId) {
+  return handle(
+    await fetch(`${API_URL}/api/rendiciones/${viajeId}/archivar`, { method: 'DELETE', headers: getAuthHeader() })
+  );
+}
+
 // Usado solo desde el formulario de login: prueba credenciales puntuales antes de
 // guardarlas, sin depender de lo que ya esté (o no) en sessionStorage.
 export async function verificarCredenciales(user, password) {

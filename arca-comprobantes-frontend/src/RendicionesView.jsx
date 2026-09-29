@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import AccountPicker from './components/AccountPicker.jsx';
-import { fetchRendiciones, fetchRendicionDetalle, getJournals, searchPartners, cargarRendicion } from './api.js';
+import {
+  fetchRendiciones, fetchRendicionDetalle, getJournals, searchPartners, cargarRendicion,
+  archivarRendicion, desarchivarRendicion,
+} from './api.js';
 
 const MOTIVO_LABELS = { Refrigerio: 'Refrigerio', Hospedaje: 'Hospedaje', Otros: 'Otros' };
 
@@ -45,8 +48,8 @@ export default function RendicionesView() {
       .finally(() => setCargando(false));
   }, [recargar]);
 
-  const pendientes = rendiciones.filter((r) => !r.completa);
-  const historial = rendiciones.filter((r) => r.completa);
+  const pendientes = rendiciones.filter((r) => !r.en_historial);
+  const historial = rendiciones.filter((r) => r.en_historial);
   const visibles = solapa === 'historial' ? historial : pendientes;
 
   useEffect(() => {
@@ -80,7 +83,7 @@ export default function RendicionesView() {
     setRowState((prev) => ({ ...prev, [gastoId]: { ...prev[gastoId], ...patch } }));
   }
 
-  const puedeEnviar = !!detalle && !detalle.error_odoo;
+  const puedeEnviar = !!detalle && !detalle.error_odoo && !detalle.archivada_manual;
   const todosEnOdoo = !!detalle && !detalle.error_odoo && detalle.gastos.every((g) => g.odoo);
   const seleccionados = (detalle?.gastos || []).filter((g) => !g.odoo && rowState[g.id]?.selected);
   const listoParaEnviar =
@@ -90,6 +93,32 @@ export default function RendicionesView() {
       const st = rowState[g.id];
       return st?.partner?.id && st?.account?.id && st?.journalKey;
     });
+
+  async function handleArchivar() {
+    const sinEnviar = detalle.gastos.filter((g) => !g.odoo).length;
+    const mensaje =
+      `Vas a pasar esta rendición al historial con ${sinEnviar} gasto(s) SIN enviar a Odoo.\n\n` +
+      `Esos gastos no se van a poder enviar mientras siga en el historial (se puede volver a pendientes). ¿Confirmás?`;
+    if (!window.confirm(mensaje)) return;
+    setError(null);
+    try {
+      await archivarRendicion(detalle.viaje_id);
+      setResultados(null);
+      setRecargar((n) => n + 1);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function handleDesarchivar() {
+    setError(null);
+    try {
+      await desarchivarRendicion(detalle.viaje_id);
+      setRecargar((n) => n + 1);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
 
   async function handleEnviar() {
     const mensaje =
@@ -162,9 +191,10 @@ export default function RendicionesView() {
                 {fecha(r.viaje_fecha)} · {r.cuadrilla_nombre || 'sin cuadrilla'} · {r.cantidad_gastos} gasto(s)
               </div>
               <div className="hint">Aprobó: {r.rendicion_aprobada_por || '—'}</div>
-              {!r.completa && r.cantidad_en_odoo > 0 && (
+              {!r.completa && (r.cantidad_en_odoo > 0 || r.archivada_manual) && (
                 <div className="hint">
                   {r.cantidad_en_odoo}/{r.cantidad_gastos} gasto(s) ya en Odoo
+                  {r.archivada_manual ? ' · pasada al historial a mano' : ''}
                 </div>
               )}
               {r.saldo_a_devolver != null && (
@@ -291,6 +321,14 @@ export default function RendicionesView() {
               <div className="banner banner-ok">
                 Todos los gastos de esta rendición ya están en Odoo: la rendición está en el historial.
               </div>
+            ) : detalle.archivada_manual ? (
+              <div className="banner banner-warning">
+                Pasada al historial a mano el {new Date(detalle.archivada_at).toLocaleString('es-AR')}, con{' '}
+                {detalle.gastos.filter((g) => !g.odoo).length} gasto(s) sin enviar a Odoo.{' '}
+                <button type="button" className="btn-secondary" onClick={handleDesarchivar}>
+                  Volver a pendientes
+                </button>
+              </div>
             ) : (
             <div className="actions">
               <button disabled={!listoParaEnviar || enviando} onClick={handleEnviar}>
@@ -299,6 +337,9 @@ export default function RendicionesView() {
               {seleccionados.length > 0 && !listoParaEnviar && puedeEnviar && (
                 <span className="hint">Falta elegir proveedor, modo de pago y/o cuenta en algún gasto seleccionado.</span>
               )}
+              <button type="button" className="btn-secondary" onClick={handleArchivar} disabled={enviando}>
+                Pasar al historial
+              </button>
             </div>
             )}
             <p className="hint">

@@ -1,4 +1,5 @@
-// Conexión de solo lectura a la base de Planificación Planta - vive en el
+// Conexión a la base de Planificación Planta (solo lectura sobre sus tablas;
+// la única tabla propia que se escribe es arca_rendiciones_archivadas) - vive en el
 // mismo proyecto Supabase que esta app, así que en vez de duplicar la
 // info de rendiciones/gastos vía una API, se consulta directo la misma
 // Postgres (mismo patrón probado en Integrador/dflex-sync-backend).
