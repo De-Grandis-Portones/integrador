@@ -26,17 +26,28 @@ export default function RendicionesView() {
   const [enviando, setEnviando] = useState(false);
   const [resultados, setResultados] = useState(null);
   const [recargar, setRecargar] = useState(0);
+  const [solapa, setSolapa] = useState('pendientes'); // 'pendientes' | 'historial'
+  const [errorOdooLista, setErrorOdooLista] = useState(null);
 
   useEffect(() => {
     getJournals().then(setJournals).catch((e) => setError(e.message));
   }, []);
 
+  // Se recarga también después de cada envío, para que la rendición que quedó
+  // completa en Odoo pase al historial.
   useEffect(() => {
     fetchRendiciones()
-      .then((d) => setRendiciones(d.rendiciones || []))
+      .then((d) => {
+        setRendiciones(d.rendiciones || []);
+        setErrorOdooLista(d.error_odoo || null);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setCargando(false));
-  }, []);
+  }, [recargar]);
+
+  const pendientes = rendiciones.filter((r) => !r.completa);
+  const historial = rendiciones.filter((r) => r.completa);
+  const visibles = solapa === 'historial' ? historial : pendientes;
 
   useEffect(() => {
     if (!seleccionada) { setDetalle(null); return; }
@@ -70,6 +81,7 @@ export default function RendicionesView() {
   }
 
   const puedeEnviar = !!detalle && !detalle.error_odoo;
+  const todosEnOdoo = !!detalle && !detalle.error_odoo && detalle.gastos.every((g) => g.odoo);
   const seleccionados = (detalle?.gastos || []).filter((g) => !g.odoo && rowState[g.id]?.selected);
   const listoParaEnviar =
     puedeEnviar &&
@@ -108,12 +120,35 @@ export default function RendicionesView() {
     <div className="rendiciones-layout">
       <div className="rendiciones-lista">
         <h2 className="rendiciones-titulo">Rendiciones aprobadas por logística</h2>
+        <div className="tabs">
+          <button
+            type="button"
+            className={`tab-btn ${solapa === 'pendientes' ? 'tab-btn-activo' : ''}`}
+            onClick={() => setSolapa('pendientes')}
+          >
+            Pendientes ({pendientes.length})
+          </button>
+          <button
+            type="button"
+            className={`tab-btn ${solapa === 'historial' ? 'tab-btn-activo' : ''}`}
+            onClick={() => setSolapa('historial')}
+          >
+            Historial ({historial.length})
+          </button>
+        </div>
+        {errorOdooLista && (
+          <div className="banner banner-error">{errorOdooLista} — se muestran todas como pendientes.</div>
+        )}
         {cargando && <p className="hint">Cargando…</p>}
-        {!cargando && rendiciones.length === 0 && (
-          <p className="hint">Todavía no hay ninguna rendición aprobada por logística.</p>
+        {!cargando && visibles.length === 0 && (
+          <p className="hint">
+            {solapa === 'historial'
+              ? 'Todavía no hay rendiciones con todos sus gastos cargados en Odoo.'
+              : rendiciones.length ? 'No hay rendiciones pendientes de cargar en Odoo 🎉' : 'Todavía no hay ninguna rendición aprobada por logística.'}
+          </p>
         )}
         <ul className="rendiciones-ul">
-          {rendiciones.map((r) => (
+          {visibles.map((r) => (
             <li
               key={r.viaje_id}
               className={`rendiciones-item ${seleccionada === r.viaje_id ? 'rendiciones-item-activo' : ''}`}
@@ -127,6 +162,11 @@ export default function RendicionesView() {
                 {fecha(r.viaje_fecha)} · {r.cuadrilla_nombre || 'sin cuadrilla'} · {r.cantidad_gastos} gasto(s)
               </div>
               <div className="hint">Aprobó: {r.rendicion_aprobada_por || '—'}</div>
+              {!r.completa && r.cantidad_en_odoo > 0 && (
+                <div className="hint">
+                  {r.cantidad_en_odoo}/{r.cantidad_gastos} gasto(s) ya en Odoo
+                </div>
+              )}
               {r.saldo_a_devolver != null && (
                 <div className="hint">
                   A devolver: <strong>${money(r.saldo_a_devolver)}</strong>
@@ -247,6 +287,11 @@ export default function RendicionesView() {
                 {detalle.error_odoo} — no se puede enviar hasta saber qué gastos ya están cargados. Recargá en un rato.
               </div>
             )}
+            {todosEnOdoo ? (
+              <div className="banner banner-ok">
+                Todos los gastos de esta rendición ya están en Odoo: la rendición está en el historial.
+              </div>
+            ) : (
             <div className="actions">
               <button disabled={!listoParaEnviar || enviando} onClick={handleEnviar}>
                 {enviando ? 'Enviando…' : `Enviar ${seleccionados.length || ''} a Odoo`}
@@ -255,6 +300,7 @@ export default function RendicionesView() {
                 <span className="hint">Falta elegir proveedor, modo de pago y/o cuenta en algún gasto seleccionado.</span>
               )}
             </div>
+            )}
             <p className="hint">
               Cada gasto se crea en Odoo como factura en borrador (una línea por el total, sin IVA, a revisar) con el
               comprobante adjunto, y un pago en borrador con el modo de pago elegido. En Odoo hay que completar número de

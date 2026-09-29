@@ -40,14 +40,19 @@ async function buscarGastosCargados(gastoIds) {
   const resultado = new Map();
   if (!ids.length) return resultado;
 
-  const origenes = ids.map(origenGasto);
-  const moves = await odooExecuteKw('account.move', 'search_read', [
-    [
-      ['move_type', '=', 'in_invoice'],
-      ['company_id', '=', ODOO_COMPANY_ID],
-      ['invoice_origin', 'in', origenes],
-    ],
-  ], { fields: ['id', 'name', 'state', 'invoice_origin'] });
+  // En tandas: el listado de rendiciones consulta los gastos de todas las aprobadas.
+  const moves = [];
+  const TANDA = 200;
+  for (let i = 0; i < ids.length; i += TANDA) {
+    const origenes = ids.slice(i, i + TANDA).map(origenGasto);
+    moves.push(...await odooExecuteKw('account.move', 'search_read', [
+      [
+        ['move_type', '=', 'in_invoice'],
+        ['company_id', '=', ODOO_COMPANY_ID],
+        ['invoice_origin', 'in', origenes],
+      ],
+    ], { fields: ['id', 'name', 'state', 'invoice_origin'] }));
+  }
 
   for (const m of moves) {
     const gastoId = Number(String(m.invoice_origin).match(/#(\d+)$/)?.[1]);
