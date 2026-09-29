@@ -10,7 +10,8 @@ const { crearBorradorDesdeGasto, buscarGastosCargados } = require('../services/r
 
 const router = express.Router();
 
-// Una fila por viaje con rendición aprobada, con el total ya sumado.
+// Una fila por viaje con rendición aprobada, con el total ya sumado y cuántos
+// de sus gastos ya están en Odoo. "completa" (todos en Odoo) = va al historial.
 router.get('/', async (req, res) => {
   try {
     const { rows } = await plantaDb.query(
@@ -18,6 +19,7 @@ router.get('/', async (req, res) => {
               vi.rendicion_aprobada_por, vi.rendicion_aprobada_at, vi.fondo_efectivo,
               c.nombre as cuadrilla_nombre,
               count(g.id)::int as cantidad_gastos,
+              array_agg(g.id) as gasto_ids,
               coalesce(sum(g.monto), 0) as total,
               coalesce(sum(g.monto) filter (where g.medio_pago = 'efectivo'), 0) as total_efectivo
          from public.logistica_viajes vi
@@ -27,11 +29,27 @@ router.get('/', async (req, res) => {
         group by vi.id, vi.nombre, vi.fecha, vi.rendicion_aprobada_por, vi.rendicion_aprobada_at, vi.fondo_efectivo, c.nombre
         order by vi.rendicion_aprobada_at desc;`
     );
-    const rendiciones = rows.map((r) => ({
-      ...r,
-      saldo_a_devolver: r.fondo_efectivo != null ? Number(r.fondo_efectivo) - Number(r.total_efectivo) : null,
-    }));
-    res.json({ rendiciones });
+
+    // Si Odoo no responde, todas quedan como pendientes (nunca se esconde una
+    // rendición por no poder confirmar que ya se cargó).
+    let cargados = new Map();
+    let errorOdoo = null;
+    try {
+      cargados = await buscarGastosCargados(rows.flatMap((r) => r.gasto_ids));
+    } catch (err) {
+      errorOdoo = `No se pudo consultar Odoo: ${err.message}`;
+    }
+
+    const rendiciones = rows.map(({ gasto_ids, ...r }) => {
+      const cantidadEnOdoo = gasto_ids.filter((id) => cargados.has(id)).length;
+      return {
+        ...r,
+        saldo_a_devolver: r.fondo_efectivo != null ? Number(r.fondo_efectivo) - Number(r.total_efectivo) : null,
+        cantidad_en_odoo: cantidadEnOdoo,
+        completa: !errorOdoo && cantidadEnOdoo === gasto_ids.length,
+      };
+    });
+    res.json({ rendiciones, error_odoo: errorOdoo });
   } catch (err) {
     console.error('Error en GET /rendiciones:', err);
     res.status(500).json({ error: err.message });
