@@ -211,6 +211,17 @@ select, .account-picker input {
   cursor: pointer;
 }
 .actions button:disabled { background: var(--border); color: var(--text-faint); cursor: not-allowed; }
+.btn-secondary, .actions button.btn-secondary {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn-secondary:hover { color: var(--text); }
+.actions button.btn-secondary { margin-left: auto; }
 .hint { color: var(--text-muted); font-size: 13px; }
 
 .resultados { margin-top: 24px; }
