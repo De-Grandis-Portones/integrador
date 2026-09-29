@@ -11,7 +11,13 @@
 // - el pago queda en borrador con el modo de pago elegido, y se confirma después
 //   de confirmar la factura.
 //
-// Idempotencia: cada factura lleva en invoice_origin una marca por gasto
+// Gastos de viáticos SIN proveedor (la usuaria deja el proveedor vacío): en vez
+// de factura + pago se prepara un ASIENTO MANUAL en borrador en "Operaciones
+// varias" (MISC): debe la cuenta elegida, haber la cuenta del modo de pago
+// (la cuenta por defecto de ese diario: caja o tarjeta a pagar). Pedido
+// explícito del usuario, 2026-09-29.
+//
+// Idempotencia: cada factura/asiento lleva en invoice_origin una marca por gasto
 // (origenGasto), y antes de crear se busca por esa marca — así un gasto no se
 // carga dos veces aunque se reintente. La base de Planta se sigue usando solo
 // para leer.
@@ -34,7 +40,8 @@ function origenGasto(gastoId) {
   return `Rendición logística - gasto #${gastoId}`;
 }
 
-// Devuelve Map<gastoId, { moveId, name, state }> de los gastos que ya tienen factura en Odoo.
+// Devuelve Map<gastoId, { moveId, name, state, tipo }> de los gastos que ya están en
+// Odoo, como factura (tipo 'factura') o como asiento manual (tipo 'asiento').
 async function buscarGastosCargados(gastoIds) {
   const ids = (gastoIds || []).map(Number).filter(Number.isFinite);
   const resultado = new Map();
@@ -47,16 +54,23 @@ async function buscarGastosCargados(gastoIds) {
     const origenes = ids.slice(i, i + TANDA).map(origenGasto);
     moves.push(...await odooExecuteKw('account.move', 'search_read', [
       [
-        ['move_type', '=', 'in_invoice'],
+        ['move_type', 'in', ['in_invoice', 'entry']],
         ['company_id', '=', ODOO_COMPANY_ID],
         ['invoice_origin', 'in', origenes],
       ],
-    ], { fields: ['id', 'name', 'state', 'invoice_origin'] }));
+    ], { fields: ['id', 'name', 'state', 'invoice_origin', 'move_type'] }));
   }
 
   for (const m of moves) {
     const gastoId = Number(String(m.invoice_origin).match(/#(\d+)$/)?.[1]);
-    if (Number.isFinite(gastoId)) resultado.set(gastoId, { moveId: m.id, name: m.name || `borrador #${m.id}`, state: m.state });
+    if (Number.isFinite(gastoId)) {
+      resultado.set(gastoId, {
+        moveId: m.id,
+        name: m.name && m.name !== '/' ? m.name : `borrador #${m.id}`,
+        state: m.state,
+        tipo: m.move_type === 'entry' ? 'asiento' : 'factura',
+      });
+    }
   }
   return resultado;
 }
@@ -109,23 +123,7 @@ async function crearBorradorDesdeGasto(gasto, viaje, { partnerId, accountId, jou
 
   const moveId = await odooExecuteKw('account.move', 'create', [invoiceVals]);
   const avisos = [];
-
-  if (gasto.storage_path && storageConfigurado()) {
-    try {
-      const archivo = await descargarComprobante(gasto.storage_path);
-      await odooExecuteKw('ir.attachment', 'create', [{
-        name: gasto.nombre_archivo || `comprobante-gasto-${gasto.id}`,
-        datas: archivo.toString('base64'),
-        res_model: 'account.move',
-        res_id: moveId,
-        mimetype: gasto.tipo_mime || 'application/octet-stream',
-      }]);
-    } catch (err) {
-      avisos.push(`No se pudo adjuntar el comprobante: ${err.message}`);
-    }
-  } else if (gasto.storage_path) {
-    avisos.push('No se adjuntó el comprobante (falta configurar Supabase Storage en el servidor).');
-  }
+  await adjuntarComprobante(gasto, moveId, avisos);
 
   let paymentId = null;
   try {
@@ -147,4 +145,89 @@ async function crearBorradorDesdeGasto(gasto, viaje, { partnerId, accountId, jou
   return { status: 'borrador', moveId, paymentId, avisos };
 }
 
-module.exports = { crearBorradorDesdeGasto, buscarGastosCargados, origenGasto };
+// Foto/PDF del comprobante de Planta adjunto al movimiento. Si falla, el
+// movimiento ya está creado: se avisa, no se corta.
+async function adjuntarComprobante(gasto, moveId, avisos) {
+  if (!gasto.storage_path) return;
+  if (!storageConfigurado()) {
+    avisos.push('No se adjuntó el comprobante (falta configurar Supabase Storage en el servidor).');
+    return;
+  }
+  try {
+    const archivo = await descargarComprobante(gasto.storage_path);
+    await odooExecuteKw('ir.attachment', 'create', [{
+      name: gasto.nombre_archivo || `comprobante-gasto-${gasto.id}`,
+      datas: archivo.toString('base64'),
+      res_model: 'account.move',
+      res_id: moveId,
+      mimetype: gasto.tipo_mime || 'application/octet-stream',
+    }]);
+  } catch (err) {
+    avisos.push(`No se pudo adjuntar el comprobante: ${err.message}`);
+  }
+}
+
+let diarioMiscId = null;
+async function getDiarioOperacionesVarias() {
+  if (diarioMiscId) return diarioMiscId;
+  const [diario] = await odooExecuteKw('account.journal', 'search_read', [
+    [['type', '=', 'general'], ['code', '=', 'MISC'], ['company_id', '=', ODOO_COMPANY_ID]],
+  ], { fields: ['id'], limit: 1 });
+  if (!diario) throw new Error('No se encontró en Odoo el diario de Operaciones varias (código MISC).');
+  diarioMiscId = diario.id;
+  return diarioMiscId;
+}
+
+const cuentaPorDiario = new Map();
+async function getCuentaDelDiario(journalId) {
+  if (cuentaPorDiario.has(journalId)) return cuentaPorDiario.get(journalId);
+  const [diario] = await odooExecuteKw('account.journal', 'read', [[journalId], ['default_account_id']]);
+  const cuentaId = diario?.default_account_id?.[0];
+  if (!cuentaId) throw new Error('El diario del modo de pago no tiene cuenta por defecto en Odoo.');
+  cuentaPorDiario.set(journalId, cuentaId);
+  return cuentaId;
+}
+
+/**
+ * Asiento manual en borrador para un gasto sin proveedor.
+ * @param {{ accountId: number, journalKey: string }} config - cuenta (debe) y modo de pago (haber)
+ */
+async function crearAsientoDesdeGasto(gasto, viaje, { accountId, journalKey }) {
+  if (!accountId) throw new Error('Falta elegir la cuenta contable.');
+  const journal = getJournalByKey(journalKey);
+  if (!journal) throw new Error(`Modo de pago desconocido: ${journalKey}`);
+
+  const monto = Math.round((Number(gasto.monto) + Number.EPSILON) * 100) / 100;
+  if (!(monto > 0)) throw new Error('El gasto no tiene un monto válido.');
+
+  const [diarioId, cuentaHaber] = await Promise.all([getDiarioOperacionesVarias(), getCuentaDelDiario(journal.journalId)]);
+  if (cuentaHaber === Number(accountId)) {
+    throw new Error('La cuenta elegida es la misma que la del modo de pago: el asiento quedaría en cero.');
+  }
+
+  const viajeNombre = viaje.viaje_nombre?.trim() || `Viaje #${viaje.viaje_id}`;
+  const detalle = `Rendición ${viajeNombre} — gasto #${gasto.id} — ${gasto.motivo}`;
+
+  const moveId = await odooExecuteKw('account.move', 'create', [{
+    move_type: 'entry',
+    company_id: ODOO_COMPANY_ID,
+    journal_id: diarioId,
+    date: gasto.fecha,
+    ref: detalle,
+    invoice_origin: origenGasto(gasto.id),
+    narration:
+      `<p>Viático sin proveedor de la rendición de logística ${escaparHtml(viajeNombre)} (${escaparHtml(viaje.viaje_fecha)}, ` +
+      `${escaparHtml(viaje.cuadrilla_nombre || 'sin cuadrilla')}) — gasto #${gasto.id}: ${escaparHtml(gasto.motivo)}, ` +
+      `${escaparHtml(gasto.tipo_comprobante || 'sin tipo')}. Pagado con: ${escaparHtml(journal.label)}.</p>`,
+    line_ids: [
+      [0, 0, { name: detalle, account_id: Number(accountId), debit: monto, credit: 0 }],
+      [0, 0, { name: `${detalle} — ${journal.label}`, account_id: cuentaHaber, debit: 0, credit: monto }],
+    ],
+  }]);
+
+  const avisos = [];
+  await adjuntarComprobante(gasto, moveId, avisos);
+  return { status: 'asiento_borrador', moveId, avisos };
+}
+
+module.exports = { crearBorradorDesdeGasto, crearAsientoDesdeGasto, buscarGastosCargados, origenGasto };

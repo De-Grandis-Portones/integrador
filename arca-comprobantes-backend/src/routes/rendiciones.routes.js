@@ -7,7 +7,7 @@
 // arca_rendiciones_archivadas (ver abajo).
 const express = require('express');
 const plantaDb = require('../plantaDb');
-const { crearBorradorDesdeGasto, buscarGastosCargados } = require('../services/rendicionOdooLoader');
+const { crearBorradorDesdeGasto, crearAsientoDesdeGasto, buscarGastosCargados } = require('../services/rendicionOdooLoader');
 
 const router = express.Router();
 
@@ -158,6 +158,8 @@ router.get('/:viajeId', async (req, res) => {
 });
 
 // Envía a Odoo los gastos seleccionados: body { gastos: [{ gastoId, partnerId, accountId, journalKey }] }.
+// Con partnerId -> factura + pago en borrador; sin partnerId (viático sin
+// proveedor) -> asiento manual en borrador.
 // Fecha, monto y comprobante se toman SIEMPRE de la base de Planta, no del navegador.
 router.post('/:viajeId/cargar', async (req, res) => {
   try {
@@ -187,11 +189,10 @@ router.post('/:viajeId/cargar', async (req, res) => {
         continue;
       }
       try {
-        const r = await crearBorradorDesdeGasto(gasto, viaje, {
-          partnerId: Number(pedido.partnerId),
-          accountId: Number(pedido.accountId),
-          journalKey: pedido.journalKey,
-        });
+        const config = { accountId: Number(pedido.accountId), journalKey: pedido.journalKey };
+        const r = pedido.partnerId
+          ? await crearBorradorDesdeGasto(gasto, viaje, { ...config, partnerId: Number(pedido.partnerId) })
+          : await crearAsientoDesdeGasto(gasto, viaje, config);
         resultados.push({ ok: true, gastoId: gasto.id, ...r });
       } catch (err) {
         resultados.push({ ok: false, gastoId: gasto.id, error: err.message });
