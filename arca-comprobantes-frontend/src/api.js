@@ -31,6 +31,14 @@ export async function searchAccounts(q) {
   );
 }
 
+export async function searchPartners(q) {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  return handle(
+    await fetch(`${API_URL}/api/comprobantes/partners?${params.toString()}`, { headers: getAuthHeader() })
+  );
+}
+
 export async function uploadCsv(file) {
   const formData = new FormData();
   formData.append('file', file);
@@ -55,6 +63,16 @@ export async function fetchRendiciones() {
 
 export async function fetchRendicionDetalle(viajeId) {
   return handle(await fetch(`${API_URL}/api/rendiciones/${viajeId}`, { headers: getAuthHeader() }));
+}
+
+export async function cargarRendicion(viajeId, gastos) {
+  return handle(
+    await fetch(`${API_URL}/api/rendiciones/${viajeId}/cargar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+      body: JSON.stringify({ gastos }),
+    })
+  );
 }
 
 // Usado solo desde el formulario de login: prueba credenciales puntuales antes de
