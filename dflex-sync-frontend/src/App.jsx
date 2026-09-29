@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import TablePage from './pages/TablePage';
 import FormulasPage from './pages/FormulasPage';
 import ImportPage from './pages/ImportPage';
-import PortonesPage from './pages/PortonesPage';
 import IpanelsPage from './pages/IpanelsPage';
 import TicketWidget from './components/TicketWidget';
 import ViewPdf from './pages/ViewPdf';
@@ -95,28 +94,6 @@ async function fetchFormulasFromBackend(accessToken) {
 }
 
 
-async function syncIpanelsOnEntry(accessToken) {
-  try {
-    const headers = {
-      'Content-Type': 'application/json',
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    };
-
-    const res = await fetch(`${API_BASE_URL}/api/sync/ipanel`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ limit: 10000 }),
-    });
-
-    if (!res.ok && res.status !== 207) {
-      const txt = await res.text();
-      console.warn('[ipanel] No se pudo sincronizar al entrar:', res.status, txt);
-    }
-  } catch (e) {
-    console.warn('[ipanel] No se pudo sincronizar al entrar:', e?.message || e);
-  }
-}
-
 async function saveFormulaToBackend(columnName, expression, accessToken) {
   const res = await fetch(`${API_BASE_URL}/api/formulas`, {
     method: 'POST',
@@ -176,11 +153,6 @@ function MainApp({ session, signOut, role }) {
   }, [accessToken]);
 
   // permissions calculadas desde role
-  const canSyncOdoo = useMemo(() => {
-    const r = String(role || 'viewer').trim().toLowerCase();
-    return r === 'admin';
-  }, [role]);
-
   const canSyncIpanel = useMemo(() => {
     const r = String(role || 'viewer').trim().toLowerCase();
     return r === 'admin';
@@ -197,7 +169,8 @@ function MainApp({ session, signOut, role }) {
   // ===== current page (persistido) =====
   const [currentPage, setCurrentPage] = useState(() => {
     const saved = localStorage.getItem(LS_CURRENT_PAGE);
-    return saved || 'tabla';
+    // 'portones' (Enviar a Odoo) se eliminó al dar de baja el sistema anterior.
+    return saved && saved !== 'portones' ? saved : 'tabla';
   });
 
   // ===== data =====
@@ -241,9 +214,6 @@ function MainApp({ session, signOut, role }) {
   useEffect(() => {
     loadData();
     loadFormulas();
-    // Sincroniza ipanels desde SQL Server hacia Supabase cada vez que se entra al integrador.
-    // La pantalla Ipanels igualmente muestra la data directa desde SQL.
-    syncIpanelsOnEntry(accessToken);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
@@ -528,14 +498,6 @@ function MainApp({ session, signOut, role }) {
 
             <button
               type="button"
-              className={currentPage === 'portones' ? 'nav-btn active' : 'nav-btn'}
-              onClick={() => setCurrentPage('portones')}
-            >
-              Portones (Enviar a Odoo)
-            </button>
-
-            <button
-              type="button"
               className={currentPage === 'ipanels' ? 'nav-btn active' : 'nav-btn'}
               onClick={() => setCurrentPage('ipanels')}
             >
@@ -618,10 +580,6 @@ function MainApp({ session, signOut, role }) {
       {currentPage === 'import' && <ImportPage rows={rows} columns={allColumns} authHeader={authHeader} />}
 
       {currentPage === 'pdf' && <ViewPdf />}
-
-      {currentPage === 'portones' && (
-        <PortonesPage authHeader={authHeader} canSyncOdoo={canSyncOdoo} />
-      )}
 
       {currentPage === 'ipanels' && (
         <IpanelsPage authHeader={authHeader} canSyncIpanel={canSyncIpanel} />
