@@ -14,8 +14,13 @@ const MARGEN = 8;
 // interpretaba como "click afuera" y lo cerraba antes de poder leerlo o elegir algo.
 // Con position:fixed en el body, el desplegable ya aparece completo y legible en su
 // posición actual en pantalla, sin depender del scroll de la tabla.
-export default function AccountPicker({ value, onChange }) {
-  const [query, setQuery] = useState(value ? `${value.code} ${value.name}` : '');
+//
+// Por defecto busca cuentas contables; con `search`, `format` y `placeholder` se
+// reutiliza para otros catálogos de Odoo (ej. proveedores en Rendiciones).
+const formatCuenta = (acc) => `${acc.code} ${acc.name}`;
+
+export default function AccountPicker({ value, onChange, search = searchAccounts, format = formatCuenta, placeholder = 'Buscar cuenta...' }) {
+  const [query, setQuery] = useState(value ? format(value) : '');
   const [options, setOptions] = useState([]);
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState(null);
@@ -50,7 +55,7 @@ export default function AccountPicker({ value, onChange }) {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       try {
-        const results = await searchAccounts(text);
+        const results = await search(text);
         setOptions(results);
       } catch {
         setOptions([]);
@@ -59,7 +64,7 @@ export default function AccountPicker({ value, onChange }) {
   }
 
   function pick(account) {
-    setQuery(`${account.code} ${account.name}`);
+    setQuery(format(account));
     setOpen(false);
     onChange(account);
   }
@@ -69,7 +74,7 @@ export default function AccountPicker({ value, onChange }) {
       <input
         ref={inputRef}
         type="text"
-        placeholder="Buscar cuenta..."
+        placeholder={placeholder}
         value={query}
         onFocus={() => handleInput(query)}
         onChange={(e) => handleInput(e.target.value)}
@@ -83,7 +88,7 @@ export default function AccountPicker({ value, onChange }) {
           >
             {options.map((acc) => (
               <li key={acc.id} onMouseDown={() => pick(acc)}>
-                <span className="acc-code">{acc.code}</span> {acc.name}
+                {acc.code !== undefined ? <><span className="acc-code">{acc.code}</span> {acc.name}</> : format(acc)}
               </li>
             ))}
           </ul>,

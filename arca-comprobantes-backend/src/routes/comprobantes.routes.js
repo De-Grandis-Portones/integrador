@@ -43,6 +43,22 @@ router.get('/accounts', async (req, res) => {
   }
 });
 
+// Búsqueda de proveedores (para las rendiciones, que no traen CUIT). GET /partners?q=texto
+// Busca por nombre o CUIT; con 2+ caracteres para no traer la agenda entera.
+router.get('/partners', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json([]);
+    const partners = await odooExecuteKw('res.partner', 'search_read', [
+      ['&', '|', ['name', 'ilike', q], ['vat', 'ilike', q], '|', ['company_id', '=', false], ['company_id', '=', ODOO_COMPANY_ID]],
+    ], { fields: ['id', 'name', 'vat'], limit: 30, order: 'supplier_rank desc, name' });
+    res.json(partners);
+  } catch (err) {
+    console.error('Error en /partners:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Sube el CSV, lo parsea y devuelve cada fila con su estado (ya cargada / cierra bien).
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
