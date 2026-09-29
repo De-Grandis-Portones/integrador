@@ -141,55 +141,18 @@ function dayRangeUtc(yyyy_mm_dd) {
 // =====================
 // AUTH / ROLES
 // =====================
-
-async function requireAuth(req, res, next) {
-  try {
-    if (!supabaseAdmin) {
-      return res.status(500).json({ error: 'Supabase admin no configurado' });
-    }
-
-    const hdr = req.headers.authorization || '';
-    const m = hdr.match(/^Bearer\s+(.+)$/i);
-    if (!m) return res.status(401).json({ error: 'Falta token Bearer' });
-
-    const token = m[1];
-    const { data, error } = await supabaseAdmin.auth.getUser(token);
-
-    if (error || !data?.user) {
-      return res.status(401).json({ error: 'Token inválido' });
-    }
-
-    req.user = data.user;
-    next();
-  } catch (e) {
-    return res.status(401).json({ error: 'No autorizado', details: e.message || String(e) });
-  }
-}
-
-async function attachRole(req, _res, next) {
-  try {
-    req.role = 'viewer';
-    if (!supabasePool || !req.user?.id) return next();
-
-    const r = await supabasePool.query('SELECT role FROM app_users WHERE user_id = $1 LIMIT 1', [req.user.id]);
-    req.role = r?.rows?.[0]?.role || 'viewer';
-    next();
-  } catch {
-    req.role = 'viewer';
-    next();
-  }
-}
-
-function requireRole(allowedRoles) {
-  const allowed = new Set(allowedRoles || []);
-  return (req, res, next) => {
-    const role = req.role || 'viewer';
-    if (!allowed.has(role)) {
-      return res.status(403).json({ error: 'No tenés permisos', role });
-    }
-    next();
-  };
-}
+// Movido a authMiddleware.js (mismo comportamiento, ninguna llamada acá abajo
+// cambia) para que registerIpanelRoutes.js pueda usar los mismos
+// requireAuth/attachRole/requireRole en vez de quedar sin auth - ver el
+// comentario en ese archivo.
+const { requireAuth, attachRole, requireRole, configureRolePool } = require('./authMiddleware');
+// attachRole reusa este pool en vez de abrir uno propio - ver el comentario
+// en authMiddleware.js sobre por qué (esta Supabase ya la comparten las 6
+// apps del ecosistema, sumar pools de a poco pega contra su límite de
+// conexiones). Esto corre bien antes de que cualquier request real llegue,
+// las rutas de ipanel recién se registran dentro del app.listen() de más
+// abajo.
+configureRolePool(supabasePool);
 
 // =====================
 // NV TERMINADOS (texto)
@@ -1232,6 +1195,22 @@ function ticketAdjuntosExceedTotal(adjuntos) {
   return adjuntos.reduce((sum, a) => sum + a.data_url.length, 0) > MAX_TICKET_ADJUNTOS_DATA_URL_CHARS;
 }
 
+// admin_users es la tabla de admins de planificación: en producción vive en
+// la misma base que tickets, pero no necesariamente en una base local de prueba.
+let adminUsersPromise = null;
+function hayAdminUsers() {
+  if (!adminUsersPromise) {
+    adminUsersPromise = supabasePool
+      .query(`select to_regclass('public.admin_users') is not null as ok;`)
+      .then(({ rows }) => !!rows[0]?.ok)
+      .catch((err) => {
+        adminUsersPromise = null;
+        throw err;
+      });
+  }
+  return adminUsersPromise;
+}
+
 app.post('/api/tickets', requireAuth, async (req, res) => {
   if (!supabasePool) return res.status(500).json({ error: 'SUPABASE_DB_URL no está configurado' });
   try {
@@ -1289,8 +1268,16 @@ app.get('/api/tickets/mine/:id', requireAuth, async (req, res) => {
     );
     const ticket = rows[0];
     if (!ticket) return res.status(404).json({ error: 'Ticket no encontrado' });
+    // Las respuestas de soporte las escribe un admin de planificación
+    // (autor_id = admin_users.id): se muestra su nombre real en vez del
+    // usuario de login, y si no tiene nombre cargado queda el usuario.
+    const autorNombre = (await hayAdminUsers())
+      ? `coalesce(case when m.es_admin then
+           (select nullif(trim(au.name), '') from public.admin_users au where au.id::text = m.autor_id::text)
+         end, m.autor_username) as autor_nombre`
+      : 'm.autor_username as autor_nombre';
     const mensajes = await supabasePool.query(
-      `select * from public.ticket_mensajes where ticket_id = $1 order by created_at asc;`,
+      `select m.*, ${autorNombre} from public.ticket_mensajes m where m.ticket_id = $1 order by m.created_at asc;`,
       [ticket.id]
     );
     return res.json({ ok: true, ticket: { ...ticket, mensajes: mensajes.rows } });
