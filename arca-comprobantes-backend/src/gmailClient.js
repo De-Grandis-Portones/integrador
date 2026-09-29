@@ -1,24 +1,27 @@
 // Cliente IMAP para la casilla de notificaciones de pago con tarjeta
-// (tarjetasedgrandisportones@gmail.com). Mismo espíritu que odooClient.js:
+// (tarjetas@degrandisportones.com, correo del dominio en SiteGround —
+// antes era una cuenta de Gmail que Google bloqueaba). Mismo espíritu que odooClient.js:
 // una conexión mínima reutilizable, sin lógica de negocio acá — el
 // matcheo contra gastos/Odoo se hace en services/, este módulo solo sabe
 // leer el buzón.
 require('dotenv').config();
 const { ImapFlow } = require('imapflow');
 
-const GMAIL_USER = process.env.GMAIL_TARJETAS_USER;
-const GMAIL_APP_PASSWORD = process.env.GMAIL_TARJETAS_APP_PASSWORD;
+const IMAP_HOST = process.env.TARJETAS_IMAP_HOST || 'mail.degrandisportones.com';
+const IMAP_PORT = Number(process.env.TARJETAS_IMAP_PORT) || 993;
+const IMAP_USER = process.env.TARJETAS_IMAP_USER;
+const IMAP_PASSWORD = process.env.TARJETAS_IMAP_PASSWORD;
 
-if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
-  console.warn('[gmailClient] Faltan variables de entorno GMAIL_TARJETAS_* — revisá tu .env');
+if (!IMAP_USER || !IMAP_PASSWORD) {
+  console.warn('[gmailClient] Faltan variables de entorno TARJETAS_IMAP_* — revisá tu .env');
 }
 
 function nuevaConexion() {
   return new ImapFlow({
-    host: 'imap.gmail.com',
-    port: 993,
+    host: IMAP_HOST,
+    port: IMAP_PORT,
     secure: true,
-    auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
+    auth: { user: IMAP_USER, pass: IMAP_PASSWORD },
     logger: false,
   });
 }
