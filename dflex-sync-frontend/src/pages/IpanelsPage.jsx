@@ -100,10 +100,9 @@ export default function IpanelsPage({ authHeader, canSyncIpanel }) {
   const [activeTab, setActiveTab] = useState('sql');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
+  const [syncing] = useState(false);
   const [error, setError] = useState('');
   const [syncResult, setSyncResult] = useState(null);
-  const [lastSyncAt, setLastSyncAt] = useState(null);
   const [schemaSyncAt, setSchemaSyncAt] = useState(null);
   const [filter, setFilter] = useState('');
   const [showSimplePanel, setShowSimplePanel] = useState(false);
@@ -147,15 +146,6 @@ export default function IpanelsPage({ authHeader, canSyncIpanel }) {
   }
 
   // SQL tab loaders
-  async function loadLastSync() {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/ipanel/last-sync`, { headers });
-      if (!res.ok) return;
-      const data = await res.json();
-      setLastSyncAt(data?.lastSyncAt || null);
-    } catch (e) { console.warn('No se pudo leer ultima sync:', e?.message); }
-  }
-
   async function loadIpanelsFromSql(nextFilter = filter) {
     try {
       setLoading(true); setError('');
@@ -164,7 +154,6 @@ export default function IpanelsPage({ authHeader, canSyncIpanel }) {
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
       const data = await res.json();
       setRows(Array.isArray(data.rows) ? data.rows : []);
-      await loadLastSync();
     } catch (e) { console.error(e); setError(e.message || 'Error cargando ipanels desde SQL'); }
     finally { setLoading(false); }
   }
@@ -203,31 +192,6 @@ export default function IpanelsPage({ authHeader, canSyncIpanel }) {
       await loadIpanelsFromSql(filter.trim());
     } catch (e) { console.error(e); setCatalogError(e.message || 'Error guardando DescripcionSimple'); }
     finally { setSavingMappingKey(''); }
-  }
-
-  async function syncIpanels({ ask = true, nextFilter = filter } = {}) {
-    const f = toStr(nextFilter);
-    if (ask && !canSyncIpanel) { window.alert('No tenes permisos para sincronizar ipanels (solo admin).'); return null; }
-    if (ask) {
-      const msg = f ? `Sincronizar ipanel ${f} desde SQL Server?` : 'Sincronizar ipanels desde SQL Server hacia Supabase?';
-      if (!window.confirm(msg)) return null;
-    }
-    try {
-      setSyncing(true); setError(''); setSyncResult(null);
-      const body = { limit: 10000 };
-      if (f) { body.partida = f; body.nv = f; }
-      const res = await fetch(`${API_BASE_URL}/api/sync/ipanel`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body),
-      });
-      const payloadText = await res.text();
-      let payload = null;
-      try { payload = payloadText ? JSON.parse(payloadText) : null; } catch { payload = { raw: payloadText }; }
-      if (!res.ok && res.status !== 207) throw new Error(payload?.error || payload?.details || payloadText || `HTTP ${res.status}`);
-      setSyncResult(payload || {});
-      await loadLastSync();
-      return payload || {};
-    } catch (e) { console.error(e); setError(e.message || 'Error sincronizando ipanels'); return null; }
-    finally { setSyncing(false); }
   }
 
   // Presupuestador tab loaders
@@ -352,18 +316,13 @@ export default function IpanelsPage({ authHeader, canSyncIpanel }) {
   }, [activeTab]);
 
   async function handleSearch(e) { e.preventDefault(); await loadIpanelsFromSql(filter.trim()); }
-  async function handleSync() {
-    const result = await syncIpanels({ ask: true, nextFilter: filter });
-    if (result) await loadIpanelsFromSql(filter.trim());
-  }
-
   return (
     <div className="content">
 
       {/* Tab switcher */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <button className={`nav-btn${activeTab === 'sql' ? ' active' : ''}`} onClick={() => setActiveTab('sql')}>
-          SQL Server
+          Sistema anterior
         </button>
         <button className={`nav-btn${activeTab === 'presupuestador' ? ' active' : ''}`} onClick={() => setActiveTab('presupuestador')}>
           Presupuestador (INV)
@@ -389,14 +348,9 @@ export default function IpanelsPage({ authHeader, canSyncIpanel }) {
             </form>
 
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-              {lastSyncAt
-                ? <span className="info">Última sync: {formatDateTime(lastSyncAt)}</span>
-                : <span className="info">Sin sync registrada</span>}
+              <span className="info">Sistema anterior dado de baja: se muestran los ipanels que ya estaban copiados.</span>
               <button type="button" className="btn-secondary" onClick={() => setShowSimplePanel((v) => !v)} disabled={loading || syncing}>
                 {showSimplePanel ? 'Ocultar DescripcionSimple' : 'Configurar DescripcionSimple'}
-              </button>
-              <button type="button" onClick={handleSync} disabled={!canSyncIpanel || loading || syncing}>
-                {syncing ? 'Sincronizando...' : 'Sincronizar ipanels'}
               </button>
             </div>
           </div>

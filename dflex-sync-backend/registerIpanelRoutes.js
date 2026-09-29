@@ -5,7 +5,6 @@
 require('dotenv').config();
 
 const Module = require('module');
-const sql = require('mssql');
 const { Pool } = require('pg');
 const { requireAuth, attachRole, requireRole } = require('./authMiddleware');
 
@@ -88,39 +87,6 @@ function parseBlockedPartidasEnv() {
 function isBlockedIpanelPartida(partida, blockedSet) {
   const n = toIntOrNull(partida);
   return Number.isInteger(n) && blockedSet && blockedSet.has(n);
-}
-
-function buildSqlConfig() {
-  const sqlServerRaw = process.env.SQL_SERVER || 'localhost';
-  let sqlHost = sqlServerRaw;
-  let sqlPort = 1433;
-
-  if (sqlServerRaw.includes(',')) {
-    const [hostPart, portPart] = sqlServerRaw.split(',');
-    sqlHost = hostPart;
-    const parsedPort = parseInt(portPart, 10);
-    if (!Number.isNaN(parsedPort)) sqlPort = parsedPort;
-  }
-
-  return {
-    user: process.env.SQL_USER,
-    password: process.env.SQL_PASSWORD,
-    server: sqlHost,
-    port: sqlPort,
-    database: process.env.SQL_DATABASE,
-    options: {
-      encrypt: false,
-      trustServerCertificate: true,
-    },
-  };
-}
-
-let ipanelSqlPoolPromise = null;
-function getIpanelSqlPool() {
-  if (!ipanelSqlPoolPromise) {
-    ipanelSqlPoolPromise = new sql.ConnectionPool(buildSqlConfig()).connect();
-  }
-  return ipanelSqlPoolPromise;
 }
 
 let ipanelPgPool = null;
@@ -352,80 +318,36 @@ function decorateSqlIpanelRow(row, mappingMap = new Map()) {
   };
 }
 
+// El SQL Server del sistema anterior (base Paneles) se dio de baja (2026-09).
+// Las filas no bloqueadas ya están copiadas en preproduccion_valores_ipanels
+// con source = 'SQL' (data guarda la fila original), así que se leen de ahí
+// con la misma forma que devolvía la consulta a Paneles.dbo.NTASVTAS.
 async function fetchSqlIpanelRows({ partida, nv, limit } = {}) {
-  const pool = await getIpanelSqlPool();
-  const request = pool.request();
+  const pgPool = getIpanelPgPool();
+  await ensureDescripcionSimpleSchema(pgPool);
 
   const limitValue = Math.max(1, Math.min(toIntOrNull(limit) || 10000, 10000));
-  request.input('limit', sql.Int, limitValue);
+  const params = [limitValue];
+  let where = "WHERE source = 'SQL'";
 
   const filterValue = toStr(partida || nv);
-  let where = '';
   if (filterValue) {
-    request.input('numeroStr', sql.VarChar, filterValue);
-    where = `
-      WHERE LTRIM(RTRIM(CAST(h.numero AS varchar(50)))) = @numeroStr
-    `;
+    params.push(filterValue);
+    where += ` AND partida::text = $${params.length}`;
   }
 
-  const result = await request.query(`
-    SELECT TOP (@limit)
-      h.fecha,
-      h.tipo,
-      h.sucursal,
-      h.numero,
-      h.deposito,
-      h.cliente,
-      h.nombre,
-      h.direccion,
-      h.localidad,
-      h.cp,
-      h.provincia,
-      h.fpago,
-      h.vendedor,
-      h.operador,
-      h.zona,
-      h.iva,
-      h.cuit,
-      h.ibrutos,
-      h.observ,
-      h.retrep,
-      h.fechaent,
-      h.dirent,
-      h.obs,
-      h.oc,
-      h.idpedido,
-      h.condicion,
-      h.factura,
-      h.remito,
-      STUFF((
-        SELECT DISTINCT ', ' + LTRIM(RTRIM(CAST(l.producto AS varchar(100))))
-        FROM Paneles.dbo.INTASVTAS AS l
-        WHERE LTRIM(RTRIM(CAST(l.numero AS varchar(50)))) = LTRIM(RTRIM(CAST(h.numero AS varchar(50))))
-          AND (h.tipo IS NULL OR l.tipo = h.tipo)
-          AND (h.sucursal IS NULL OR l.sucursal = h.sucursal)
-          AND (h.deposito IS NULL OR l.deposito = h.deposito)
-          AND l.producto IS NOT NULL
-        FOR XML PATH(''), TYPE
-      ).value('.', 'nvarchar(max)'), 1, 2, '') AS producto_codigos,
-      STUFF((
-        SELECT DISTINCT ' | ' + LTRIM(RTRIM(COALESCE(p.descripcion, '')))
-        FROM Paneles.dbo.INTASVTAS AS l
-        LEFT JOIN Paneles.dbo.PRODUCTOS AS p
-          ON LTRIM(RTRIM(CAST(p.codigo AS varchar(100)))) = LTRIM(RTRIM(CAST(l.producto AS varchar(100))))
-        WHERE LTRIM(RTRIM(CAST(l.numero AS varchar(50)))) = LTRIM(RTRIM(CAST(h.numero AS varchar(50))))
-          AND (h.tipo IS NULL OR l.tipo = h.tipo)
-          AND (h.sucursal IS NULL OR l.sucursal = h.sucursal)
-          AND (h.deposito IS NULL OR l.deposito = h.deposito)
-          AND NULLIF(LTRIM(RTRIM(COALESCE(p.descripcion, ''))), '') IS NOT NULL
-        FOR XML PATH(''), TYPE
-      ).value('.', 'nvarchar(max)'), 1, 3, '') AS producto_descripcion
-    FROM Paneles.dbo.NTASVTAS AS h
-    ${where}
-    ORDER BY h.fecha DESC, h.numero DESC
-  `);
+  const { rows } = await pgPool.query(
+    `
+      SELECT data
+      FROM public.preproduccion_valores_ipanels
+      ${where}
+      ORDER BY fecha_nv DESC NULLS LAST, partida DESC
+      LIMIT $1
+    `,
+    params
+  );
 
-  return result.recordset || [];
+  return (rows || []).map((r) => (r.data && typeof r.data === 'object' ? r.data : {}));
 }
 
 async function getDescripcionSimpleCatalog({ limit } = {}) {
@@ -504,134 +426,22 @@ async function upsertDescripcionSimpleMapping({ descripcion, descripcion_simple 
   return { descripcion: desc, descripcion_simple: simple };
 }
 
-async function upsertPreproduccionValoresIpanelRow(pgPool, mapped) {
-  await ensureDescripcionSimpleSchema(pgPool);
-
-  const existing = await pgPool.query(
-    `
-      SELECT id, data
-      FROM public.preproduccion_valores_ipanels
-      WHERE partida = $1
-      ORDER BY id ASC
-      LIMIT 1
-    `,
-    [mapped.partida]
-  );
-
-  if (existing.rows.length) {
-    const existingData = existing.rows[0]?.data && typeof existing.rows[0].data === 'object' ? existing.rows[0].data : {};
-    const mergedData = {
-      ...existingData,
-      ...(mapped.data || {}),
-    };
-
-    // No pisar fechas/datos imputados por logística desde Planificación.
-    for (const key of ['fecha_prod', 'inicio_prod_imput', 'fecha_plan_entrega', 'fecha_salida_imput', 'produccion_enviada', 'produccion_enviada_at', 'ipanel_id']) {
-      if (existingData[key] !== undefined && existingData[key] !== null && String(existingData[key]).trim() !== '') {
-        mergedData[key] = existingData[key];
-      }
-    }
-
-    await pgPool.query(
-      `
-        UPDATE public.preproduccion_valores_ipanels
-        SET
-          nv = $2,
-          source = coalesce(source, 'SQL'),
-          fecha_nv = $3,
-          fecha_plan_entrega = coalesce(fecha_plan_entrega, $4),
-          descripcion = $5,
-          descripcion_simple = $6,
-          data = $7::jsonb,
-          updated_at = now()
-        WHERE id = $1
-      `,
-      [
-        existing.rows[0].id,
-        mapped.nv,
-        mapped.fecha_nv,
-        mapped.fecha_plan_entrega,
-        mapped.descripcion || mapped.data?.descripcion || mapped.data?.producto_descripcion || null,
-        mapped.descripcion_simple || mapped.data?.DescripcionSimple || null,
-        JSON.stringify(mergedData),
-      ]
-    );
-    return 'updated';
-  }
-
-  await pgPool.query(
-    `
-      INSERT INTO public.preproduccion_valores_ipanels (
-        partida,
-        nv,
-        source,
-        fecha_nv,
-        fecha_plan_entrega,
-        descripcion,
-        descripcion_simple,
-        data
-      ) VALUES ($1, $2, 'SQL', $3, $4, $5, $6, $7::jsonb)
-    `,
-    [
-      mapped.partida,
-      mapped.nv,
-      mapped.fecha_nv,
-      mapped.fecha_plan_entrega,
-      mapped.descripcion || mapped.data?.descripcion || mapped.data?.producto_descripcion || null,
-      mapped.descripcion_simple || mapped.data?.DescripcionSimple || null,
-      JSON.stringify(mapped.data || {}),
-    ]
-  );
-  return 'inserted';
-}
-
-async function syncIpanels({ partida, nv, limit } = {}) {
-  const pgPool = getIpanelPgPool();
-  await ensureDescripcionSimpleSchema(pgPool);
-  const mappingMap = await getDescripcionSimpleMappingMap(pgPool);
-  const blockedSet = await getBlockedIpanelPartidas(pgPool);
-  const deletedBlocked = await deleteBlockedIpanelPreproduccionRows(pgPool, blockedSet);
-  const sqlRows = await fetchSqlIpanelRows({ partida, nv, limit });
-
-  let inserted = 0;
-  let updated = 0;
-  let skipped = 0;
-  let skippedBlocked = 0;
-  const errors = [];
-
-  for (const row of sqlRows) {
-    try {
-      const mapped = mapSqlRowToPreproduccionValoresIpanel(row, mappingMap);
-      if (!mapped) {
-        skipped += 1;
-        continue;
-      }
-
-      if (isBlockedIpanelPartida(mapped.partida, blockedSet)) {
-        skipped += 1;
-        skippedBlocked += 1;
-        continue;
-      }
-
-      const result = await upsertPreproduccionValoresIpanelRow(pgPool, mapped);
-      if (result === 'inserted') inserted += 1;
-      else if (result === 'updated') updated += 1;
-    } catch (err) {
-      errors.push({ numero: row?.numero ?? null, error: err?.message || String(err) });
-    }
-  }
-
+// Ya no hay de dónde sincronizar: el SQL Server del sistema anterior se dio de
+// baja. Se mantiene la ruta para que el front no falle.
+async function syncIpanels() {
   return {
-    ok: errors.length === 0,
+    ok: true,
     source: 'SQL',
-    imported: inserted + updated,
-    inserted,
-    updated,
-    skipped,
-    skippedBlocked,
-    deletedBlocked,
-    totalSqlRows: sqlRows.length,
-    errors,
+    disabled: true,
+    message: 'El sistema anterior (SQL Server) se dio de baja: no hay ipanels nuevos para sincronizar.',
+    imported: 0,
+    inserted: 0,
+    updated: 0,
+    skipped: 0,
+    skippedBlocked: 0,
+    deletedBlocked: 0,
+    totalSqlRows: 0,
+    errors: [],
   };
 }
 

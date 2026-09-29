@@ -1,7 +1,7 @@
 {
   "name": "dflex-sync-backend",
   "version": "1.0.0",
-  "description": "Servicio intermedio entre SQL Server Portones y Odoo 18",
+  "description": "Backend del Integrador (preproducción de portones e ipanels sobre Supabase)",
   "main": "server.js",
   "scripts": {
     "start": "node -r ./registerIpanelRoutes.js server.js",
@@ -9,11 +9,9 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.89.0",
-    "axios": "^1.7.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
     "express": "^4.19.0",
-    "mssql": "^10.0.0",
     "node-cron": "^3.0.3",
     "pdf-lib": "^1.17.1",
     "pdfkit": "^0.17.2",
