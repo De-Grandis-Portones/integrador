@@ -848,6 +848,33 @@ function ticketAdjuntosExceedTotal(adjuntos) {
   return adjuntos.reduce((sum, a) => sum + a.data_url.length, 0) > MAX_TICKET_ADJUNTOS_DATA_URL_CHARS;
 }
 
+// Título libre del ticket (obligatorio al crear; el input del widget ya lo
+// corta con maxLength, acá se recorta por si alguien llama a la API directo).
+const MAX_TICKET_TITULO = 120;
+
+// La columna tickets.titulo la crea la migración tickets_titulo de
+// planificación, pero esta app puede publicarse antes: si todavía no existe,
+// se agrega acá (solo si falta, una vez por proceso). Sin esto, crear o
+// listar tickets fallaría hasta que se publique planificación.
+let tituloColumnPromise = null;
+function asegurarColumnaTitulo() {
+  if (!tituloColumnPromise) {
+    tituloColumnPromise = supabasePool
+      .query(
+        `select 1 from information_schema.columns
+          where table_schema = 'public' and table_name = 'tickets' and column_name = 'titulo';`
+      )
+      .then(({ rowCount }) => {
+        if (!rowCount) return supabasePool.query('alter table public.tickets add column if not exists titulo text;');
+      })
+      .catch((err) => {
+        tituloColumnPromise = null;
+        throw err;
+      });
+  }
+  return tituloColumnPromise;
+}
+
 // admin_users es la tabla de admins de planificación: en producción vive en
 // la misma base que tickets, pero no necesariamente en una base local de prueba.
 let adminUsersPromise = null;
@@ -867,23 +894,28 @@ function hayAdminUsers() {
 app.post('/api/tickets', requireAuth, async (req, res) => {
   if (!supabasePool) return res.status(500).json({ error: 'SUPABASE_DB_URL no está configurado' });
   try {
+    const titulo = String(req.body?.titulo || '').trim().slice(0, MAX_TICKET_TITULO);
     const categoria = String(req.body?.categoria || '').trim();
     const mensaje = String(req.body?.mensaje || '').trim();
     const rutaOrigen = req.body?.rutaOrigen ? String(req.body.rutaOrigen) : null;
     const adjuntos = normalizeTicketAdjuntos(req.body?.adjuntos);
+    // El widget nuevo ya no deja enviar sin título: este mensaje solo lo ve
+    // quien tiene abierta la versión vieja de la pantalla (sin el campo).
+    if (!titulo) return res.status(400).json({ error: 'Falta el título. Si no ves el campo "Título", recargá la página.' });
     if (!categoria) return res.status(400).json({ error: 'Falta la categoría' });
     if (!mensaje) return res.status(400).json({ error: 'Falta el mensaje' });
     if (ticketAdjuntosExceedTotal(adjuntos)) {
       return res.status(400).json({ error: 'Los adjuntos superan el tamaño total permitido.' });
     }
 
+    await asegurarColumnaTitulo();
     const { rows } = await supabasePool.query(
       `
-      insert into public.tickets (categoria, mensaje, ruta_origen, creado_por_id, creado_por_username, app_origen, adjuntos)
-      values ($1, $2, $3, $4, $5, 'integrador', $6::jsonb)
+      insert into public.tickets (categoria, mensaje, ruta_origen, creado_por_id, creado_por_username, app_origen, adjuntos, titulo)
+      values ($1, $2, $3, $4, $5, 'integrador', $6::jsonb, $7)
       returning *;
       `,
-      [categoria, mensaje, rutaOrigen, req.user.id, req.user.email, JSON.stringify(adjuntos)]
+      [categoria, mensaje, rutaOrigen, req.user.id, req.user.email, JSON.stringify(adjuntos), titulo]
     );
     return res.json({ ok: true, ticket: rows[0] });
   } catch (err) {
@@ -899,8 +931,9 @@ app.get('/api/tickets/mine', requireAuth, async (req, res) => {
     // base64) y esta lista es solo para pintar categoría/estado/fecha - se
     // recorta a propósito. El detalle (GET /api/tickets/mine/:id) sí trae
     // todo con `select *`.
+    await asegurarColumnaTitulo();
     const { rows } = await supabasePool.query(
-      `select id, categoria, mensaje, estado, creado_por_id, creado_por_username,
+      `select id, titulo, categoria, mensaje, estado, creado_por_id, creado_por_username,
               ruta_origen, app_origen, created_at, updated_at
        from public.tickets where creado_por_id = $1 order by created_at desc;`,
       [req.user.id]
