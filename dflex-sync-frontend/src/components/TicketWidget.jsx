@@ -94,6 +94,11 @@ const TICKET_CATEGORIAS = [
   'Otro',
 ];
 
+// Título libre y obligatorio, para distinguir un ticket de otro en las listas
+// (con solo la categoría se veían todos iguales). Los tickets viejos no
+// tienen: ahí se sigue mostrando la categoría.
+const MAX_TITULO = 120;
+
 const ESTADO_LABEL = { pending: 'Pendiente', in_progress: 'En curso', closed: 'Cerrado' };
 const ESTADO_COLOR = { pending: '#b45309', in_progress: '#92720c', closed: '#15803d' };
 
@@ -113,6 +118,7 @@ export default function TicketWidget({ authHeader }) {
   const [tab, setTab] = useState('nueva');
   const panelRef = useRef(null);
 
+  const [titulo, setTitulo] = useState('');
   const [categoria, setCategoria] = useState(TICKET_CATEGORIAS[0]);
   const [mensaje, setMensaje] = useState('');
   const [adjuntos, setAdjuntos] = useState([]);
@@ -237,6 +243,10 @@ export default function TicketWidget({ authHeader }) {
 
   async function enviarNuevoTicket(e) {
     e.preventDefault();
+    if (!titulo.trim()) {
+      setErrorNueva('Poné un título antes de enviar.');
+      return;
+    }
     if (!mensaje.trim()) {
       setErrorNueva('Escribí el detalle antes de enviar.');
       return;
@@ -247,7 +257,7 @@ export default function TicketWidget({ authHeader }) {
       const res = await fetch(`${API_BASE_URL}/api/tickets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(authHeader || {}) },
-        body: JSON.stringify({ categoria, mensaje: mensaje.trim(), rutaOrigen: 'integrador', adjuntos }),
+        body: JSON.stringify({ titulo: titulo.trim(), categoria, mensaje: mensaje.trim(), rutaOrigen: 'integrador', adjuntos }),
       });
       if (res.status === 413) {
         throw new Error('Los adjuntos son demasiado pesados para enviarse juntos. Sacá alguno o achicalo e intentá de nuevo.');
@@ -255,6 +265,7 @@ export default function TicketWidget({ authHeader }) {
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
       const data = await res.json();
       if (data?.ticket) markTicketSeen(data.ticket.id, data.ticket);
+      setTitulo('');
       setMensaje('');
       setAdjuntos([]);
       setEnviado(true);
@@ -378,6 +389,19 @@ export default function TicketWidget({ authHeader }) {
               <form onSubmit={enviarNuevoTicket} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: T.inkWeak }}>
+                    Título
+                  </label>
+                  <input
+                    value={titulo}
+                    onChange={(e) => setTitulo(e.target.value)}
+                    maxLength={MAX_TITULO}
+                    placeholder="Ej: No sincroniza el pedido 3310"
+                    style={{ width: '100%', padding: '9px 10px', borderRadius: 10, border: `1px solid ${T.border}`, background: T.surface, color: T.ink, fontSize: 13, boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: T.inkWeak }}>
                     Categoría
                   </label>
                   <select
@@ -491,7 +515,7 @@ export default function TicketWidget({ authHeader }) {
 
                 <button
                   type="submit"
-                  disabled={enviando || !mensaje.trim()}
+                  disabled={enviando || !titulo.trim() || !mensaje.trim()}
                   style={{
                     width: '100%', padding: '10px 12px', fontSize: 13, borderRadius: 10,
                     border: 'none', background: T.brand, color: '#fff', fontWeight: 700, cursor: 'pointer',
@@ -529,9 +553,9 @@ export default function TicketWidget({ authHeader }) {
                         }}
                       />
                     )}
-                    <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{t.categoria}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: T.ink, paddingRight: 12, overflowWrap: 'anywhere' }}>{t.titulo || t.categoria}</div>
                     <div style={{ fontSize: 12, color: T.inkWeak, margin: '2px 0' }}>
-                      {new Date(t.created_at).toLocaleString()}
+                      {t.titulo ? `${t.categoria} · ` : ''}{new Date(t.created_at).toLocaleString()}
                     </div>
                     <span style={{ fontSize: 11, fontWeight: 700, color: ESTADO_COLOR[t.estado] || T.ink }}>
                       {ESTADO_LABEL[t.estado] || t.estado}
@@ -550,7 +574,10 @@ export default function TicketWidget({ authHeader }) {
                 >
                   ← Volver
                 </button>
-                <div style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>{ticketSeleccionado.categoria}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: T.ink, overflowWrap: 'anywhere' }}>{ticketSeleccionado.titulo || ticketSeleccionado.categoria}</div>
+                {ticketSeleccionado.titulo && (
+                  <div style={{ fontSize: 12, color: T.inkWeak }}>{ticketSeleccionado.categoria}</div>
+                )}
                 <span style={{ fontSize: 11, fontWeight: 700, color: ESTADO_COLOR[ticketSeleccionado.estado] || T.ink }}>
                   {ESTADO_LABEL[ticketSeleccionado.estado] || ticketSeleccionado.estado}
                 </span>
